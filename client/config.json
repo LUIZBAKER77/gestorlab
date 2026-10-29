@@ -1,0 +1,9 @@
+{
+  "server_host": "auto",
+  "server_port": 8000,
+  "fps_interval": 0.5,
+  "jpeg_quality": 40,
+  "scale": 0.4,
+  "require_student_login": true,
+  "class_password": ""
+}
