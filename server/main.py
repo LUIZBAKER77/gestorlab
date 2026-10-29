@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import os
+import re
 import socket
 import threading
 import time
@@ -34,6 +35,8 @@ ALLOWED_ACTIONS = {
     "power", "student_logout", "bypass_student_login", "open_url",
 }
 ATTENDANCE_HEARTBEAT_SECONDS = 60
+MAX_FRAME_CHARS = 4 * 1024 * 1024
+FRAME_PATTERN = re.compile(r"data:image/jpeg;base64,[A-Za-z0-9+/]+={0,2}")
 MAX_LOCK_SECONDS = 4 * 3600
 # Nunca fechados pelo agente, mesmo se alguém os colocar na lista de bloqueio.
 PROTECTED_PROGRAMS = {
@@ -386,11 +389,17 @@ async def import_students_api(file: UploadFile = File(...), update_existing: boo
     return {"success": True, **result}
 
 
+def _csv_safe(value: Any) -> Any:
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@", chr(9), chr(13)):
+        return "'" + value
+    return value
+
+
 def csv_response(header: List[str], rows: List[list], filename: str) -> Response:
     out = io.StringIO()
     writer = csv.writer(out, delimiter=";")
     writer.writerow(header)
-    writer.writerows(rows)
+    writer.writerows([[_csv_safe(c) for c in row] for row in rows])
     return Response(
         content="﻿" + out.getvalue(),   # BOM: o Excel abre os acentos corretamente
         media_type="text/csv; charset=utf-8",
@@ -661,7 +670,7 @@ async def websocket_client(websocket: WebSocket):
             return
 
         host = websocket.client.host if websocket.client else "?"
-        client_id = str(init.get("id") or f"{init.get('hostname', 'pc')}-{host}")[:120]
+        client_id = f"{str(init.get('hostname', 'pc'))[:100]}-{host}"
         info = {
             "id": client_id,
             "hostname": str(init.get("hostname", "Desconhecido"))[:100],
@@ -726,7 +735,8 @@ async def handle_client_message(websocket: WebSocket, client_id: str, msg: dict)
 
     if msg_type == "screen_frame":
         frame = msg.get("data")
-        if isinstance(frame, str):
+        # O painel exibe este texto como <img src>: só JPEG em base64 passa (bloqueia XSS por quadro forjado).
+        if isinstance(frame, str) and len(frame) <= MAX_FRAME_CHARS and FRAME_PATTERN.fullmatch(frame):
             current["latest_frame"] = frame
             broadcast_frame_nonblocking(client_id, frame)
 
