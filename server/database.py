@@ -84,6 +84,13 @@ def init_db() -> None:
         # Sessões que ficaram abertas (servidor desligado) são encerradas no último sinal
         # de vida registrado, e não mais com duração zero.
         conn.execute("UPDATE attendance SET logout_at = COALESCE(last_seen, login_at) WHERE logout_at IS NULL")
+        if conn.execute("SELECT COUNT(*) FROM students").fetchone()[0] == 0:
+            pwd_hash, salt = hash_password("123456")
+            conn.execute(
+                "INSERT INTO students (matricula, name, turma, password_hash, salt) VALUES (?, ?, ?, ?, ?)",
+                ("2026001", "Aluno Exemplo", "Turma A", pwd_hash, salt),
+            )
+            print("[GESTORLAB DB] Banco criado com aluno modelo (Matrícula: 2026001 / Senha: 123456). Exclua-o depois.")
 
 
 def list_students(query: Optional[str] = None) -> List[Dict[str, Any]]:

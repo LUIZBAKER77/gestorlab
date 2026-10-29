@@ -34,9 +34,10 @@ if sys.stdout is None or sys.stderr is None:
     sys.stdout = sys.stdout or _log
     sys.stderr = sys.stderr or _log
 
+DEFAULT_PASSWORD = "padrao#jf"
+
 _DEFAULTS = {
-    "admin_password": "",      # vazia: uma senha aleatória é gerada na primeira execução
-    "password_is_initial": False,   # True enquanto o painel usa a senha gerada automaticamente
+    "admin_password": DEFAULT_PASSWORD,
     "secret_key": "",          # gerada automaticamente na primeira execução
     "agent_key": "",           # opcional: se preenchida, os agentes precisam apresentá-la
     "port": 8000,
@@ -59,23 +60,8 @@ def _load() -> dict:
         except (OSError, ValueError) as e:
             print(f"[GESTORLAB] server_config.json inválido, usando padrões: {e}")
 
-    changed = False
     if not cfg.get("secret_key"):
         cfg["secret_key"] = secrets.token_hex(32)
-        changed = True
-    if not cfg.get("admin_password"):
-        # Sem senha padrão no código: cada instalação gera a sua e avisa o administrador.
-        cfg["admin_password"] = "".join(secrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(10))
-        cfg["password_is_initial"] = True
-        changed = True
-        try:
-            with open(os.path.join(DATA_DIR, "SENHA_INICIAL.txt"), "w", encoding="utf-8") as f:
-                f.write(f"Senha inicial do painel do professor: {cfg['admin_password']}\n"
-                        "Entre no painel, abra Configurações e troque a senha. Depois apague este arquivo.\n")
-        except OSError:
-            pass
-        print(f"[GESTORLAB] Senha inicial do painel: {cfg['admin_password']} (também em dados\\SENHA_INICIAL.txt)")
-    if changed:
         save_config(cfg)
     return cfg
 

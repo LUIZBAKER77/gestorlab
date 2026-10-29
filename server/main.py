@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 import auth
 import database
-from config import CONFIG, DATA_DIR, STATIC_DIR, save_config
+from config import CONFIG, DEFAULT_PASSWORD, STATIC_DIR, save_config
 
 PORT = int(CONFIG["port"])
 DISCOVERY_PORT = int(CONFIG["discovery_port"])
@@ -165,7 +165,7 @@ async def lifespan(_app: FastAPI):
     database.init_db()
     start_udp_discovery()
     heartbeat = asyncio.create_task(attendance_heartbeat())
-    if CONFIG.get("password_is_initial"):
+    if CONFIG["admin_password"] == DEFAULT_PASSWORD:
         print("[GESTORLAB] AVISO: a senha do painel ainda é a padrão. Troque-a em Configurações, no painel.")
     yield
     heartbeat.cancel()
@@ -301,7 +301,7 @@ async def get_server_info():
         "discovery_port": DISCOVERY_PORT,
         "total_clients": len(connected_clients),
         "clients": list(connected_clients.keys()),
-        "default_password": bool(CONFIG.get("password_is_initial")),
+        "default_password": CONFIG["admin_password"] == DEFAULT_PASSWORD,
         "max_upload_mb": CONFIG["max_upload_mb"],
     }
 
@@ -320,17 +320,12 @@ async def change_admin_password(req: ChangePasswordRequest, request: Request):
     if new == CONFIG["admin_password"]:
         return JSONResponse(status_code=400, content={"success": False, "error": "A nova senha é igual à atual."})
 
-    old, was_initial = CONFIG["admin_password"], CONFIG.get("password_is_initial", False)
+    old = CONFIG["admin_password"]
     CONFIG["admin_password"] = new
-    CONFIG["password_is_initial"] = False
     if not await asyncio.to_thread(save_config, CONFIG):
-        CONFIG["admin_password"], CONFIG["password_is_initial"] = old, was_initial
+        CONFIG["admin_password"] = old
         return JSONResponse(status_code=500, content={"success": False, "error": "Não foi possível gravar a configuração."})
     login_limiter.reset(ip)
-    try:
-        os.remove(os.path.join(DATA_DIR, "SENHA_INICIAL.txt"))   # o arquivo com a senha antiga some
-    except OSError:
-        pass
     print("[GESTORLAB] Senha do painel alterada; sessões anteriores foram encerradas.")
     # Painéis já abertos foram autorizados com a senha antiga: força a reconexão (quem não
     # tiver o token novo cai na tela de login).
