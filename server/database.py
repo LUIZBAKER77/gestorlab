@@ -334,6 +334,7 @@ def record_event(hostname: str, student_name: str, kind: str, detail: str) -> No
     with connect() as conn:
         conn.execute("INSERT INTO events (hostname, student_name, kind, detail) VALUES (?, ?, ?, ?)",
                      (hostname, student_name, kind, detail))
+        conn.execute("DELETE FROM events WHERE id <= (SELECT MAX(id) FROM events) - 5000")
 
 
 def list_events(limit: int = 200) -> List[Dict[str, Any]]:

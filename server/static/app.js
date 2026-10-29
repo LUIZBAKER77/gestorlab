@@ -334,7 +334,7 @@ function handleServerMessage(data) {
         setLockDeadline(c.info, c.info.lock_remaining);
         clientsMap.set(c.id, {
           info: c.info,
-          latest_frame: c.latest_frame
+          latest_frame: safeFrame(c.latest_frame)
         });
       });
       renderGrid();
@@ -368,10 +368,12 @@ function handleServerMessage(data) {
     case "screen_frame":
       const client = clientsMap.get(data.client_id);
       if (client) {
-        client.latest_frame = data.data;
-        updateCardImage(data.client_id, data.data);
+        const frame = safeFrame(data.data);
+        if (!frame) break;   // quadro inválido: ignora
+        client.latest_frame = frame;
+        updateCardImage(data.client_id, frame);
         if (currentZoomId === data.client_id) {
-          modalScreenImg.src = data.data;
+          modalScreenImg.src = frame;
         }
       }
       break;
@@ -437,6 +439,12 @@ function updateCounters() {
   });
   onlineCount.textContent = total;
   lockedCount.textContent = locked;
+}
+
+// O quadro vem do computador do aluno: só aceita JPEG em base64 (qualquer outra coisa pode ser um ataque).
+const FRAME_RE = /^data:image\/jpeg;base64,[A-Za-z0-9+\/]+={0,2}$/;
+function safeFrame(value) {
+  return typeof value === "string" && FRAME_RE.test(value) ? value : null;
 }
 
 function updateCardImage(clientId, frameData) {
@@ -522,7 +530,7 @@ function renderGrid() {
     const hostE = escapeHtml(info.hostname);
     const ipE = escapeHtml(info.ip);
     const idE = escapeHtml(info.id);
-    const imgSrc = c.latest_frame || "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='320' height='180' viewBox='0 0 320 180'><rect width='100%' height='100%' fill='%230f172a'/><text x='50%' y='50%' fill='%23475569' font-size='12' font-family='sans-serif' text-anchor='middle'>Aguardando sinal de tela...</text></svg>";
+    const PLACEHOLDER_IMG = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='320' height='180' viewBox='0 0 320 180'><rect width='100%' height='100%' fill='%230f172a'/><text x='50%' y='50%' fill='%23475569' font-size='12' font-family='sans-serif' text-anchor='middle'>Aguardando sinal de tela...</text></svg>";
 
     // Badge do Aluno
     const hasStudent = info.student_name && info.student_name.trim().length > 0;
@@ -565,7 +573,7 @@ function renderGrid() {
 
       <!-- Screen Preview Area -->
       <div class="relative bg-black aspect-video flex items-center justify-center overflow-hidden cursor-pointer" data-action="zoom">
-        <img id="screen-${idE}" src="${imgSrc}" alt="${hostE}" class="w-full h-full object-contain">
+        <img id="screen-${idE}" src="${PLACEHOLDER_IMG}" alt="${hostE}" class="w-full h-full object-contain">
         
         <!-- Lock Overlay -->
         <div id="overlay-${idE}" class="absolute inset-0 bg-red-950/85 backdrop-blur-xs flex flex-col items-center justify-center text-white ${isLocked ? '' : 'hidden'}">
@@ -632,6 +640,8 @@ function renderGrid() {
       </div>
     `;
 
+    const preview = card.querySelector("img");
+    if (c.latest_frame && preview) preview.src = c.latest_frame;   // via DOM, nunca como texto de HTML
     pcsGrid.appendChild(card);
   });
 }
