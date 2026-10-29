@@ -1,0 +1,2 @@
+-r requirements-professor.txt
+-r requirements-aluno.txt

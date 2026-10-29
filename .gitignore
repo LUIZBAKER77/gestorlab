@@ -1,0 +1,25 @@
+# Dados reais (alunos, senhas, configuração): nunca versionar
+dados/
+**/dados/
+*.db
+*.db-wal
+*.db-shm
+server_config.json
+alunos_importados.csv
+*.csv
+
+# Pacotes gerados (build_pacotes.ps1 recria) e Python embutido
+1_PROFESSOR/
+2_ALUNO/
+python_app/
+_antigo/
+client/dist/
+*.exe
+*.pkg
+*.pyz
+
+# Python / editor
+__pycache__/
+*.pyc
+.claude/
+*.log
