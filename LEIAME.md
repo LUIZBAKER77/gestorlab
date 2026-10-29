@@ -12,7 +12,7 @@ Cada pacote é **um .exe + a pasta `app`** (Python embutido) + a pasta `dados` (
 2. Dê duplo clique em **`GestorLab Professor.exe`**. O painel abre no navegador.
 3. Pronto: o programa **inicia sozinho com o Windows** a partir daí (sem janela e sem abrir o navegador; para abrir o painel, dê duplo clique no .exe de novo ou acesse `http://localhost:8000`).
 
-Na primeira execução o programa **gera uma senha aleatória** para o painel, mostrada em `dados\SENHA_INICIAL.txt`. Entre com ela e troque-a pelo botão **Configurações** (o painel avisa enquanto a senha inicial estiver em uso; o arquivo é apagado ao trocar). Trocar a senha encerra as sessões abertas em outros navegadores.
+Senha padrão do painel: `padrao#jf` — **troque** pelo botão **Configurações** no painel (o painel avisa enquanto a senha padrão estiver em uso). Trocar a senha encerra as sessões abertas em outros navegadores.
 
 ## 👥 Computadores dos Alunos — pasta `2_ALUNO`
 
