@@ -1,54 +1,83 @@
-"""Tokens de sessão do professor e limitação de tentativas de login."""
+"""Sessões da equipe (tokens assinados) e limitação de tentativas de login."""
 import base64
 import hashlib
 import hmac
 import time
 from collections import defaultdict
-from typing import Optional
+from typing import Any, Dict, Optional
 
-from fastapi import HTTPException, Query, Request
+from fastapi import Depends, HTTPException, Query, Request
 
+import database
 from config import CONFIG
 
-def _signing_key() -> bytes:
-    # A senha do painel entra na chave: ao trocá-la, todas as sessões antigas deixam de valer.
-    pwd_digest = hashlib.sha256(str(CONFIG["admin_password"]).encode()).hexdigest()
-    return f"{CONFIG['secret_key']}:{pwd_digest}".encode()
+_SECRET = CONFIG["secret_key"].encode()
 
 
-def check_admin_password(password: str) -> bool:
-    return hmac.compare_digest(password.encode(), str(CONFIG["admin_password"]).encode())
+def public_user(user: Dict[str, Any]) -> Dict[str, Any]:
+    return {"id": user["id"], "email": user["email"], "name": user["name"], "role": user["role"],
+            "must_change": bool(user["must_change"])}
 
 
-def create_access_token(remember: bool = True) -> str:
-    # Lembrar: 365 dias. Senão: 24 horas.
-    duration = 365 * 24 * 3600 if remember else 24 * 3600
-    payload = f"{int(time.time() + duration)}:teacher"
-    sig = hmac.new(_signing_key(), payload.encode(), hashlib.sha256).hexdigest()
+def _fingerprint(user: Dict[str, Any]) -> str:
+    # Parte do hash da senha entra no token: trocar a senha invalida as sessões antigas.
+    return user["password_hash"][:16]
+
+
+def create_access_token(user: Dict[str, Any], remember: bool = True) -> str:
+    # Lembrar: 30 dias. Senão: 12 horas.
+    duration = 30 * 24 * 3600 if remember else 12 * 3600
+    payload = f"{int(time.time() + duration)}:{user['id']}:{_fingerprint(user)}"
+    sig = hmac.new(_SECRET, payload.encode(), hashlib.sha256).hexdigest()
     return base64.urlsafe_b64encode(f"{payload}:{sig}".encode()).decode()
 
 
-def verify_token(token: Optional[str]) -> bool:
+def verify_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Devolve o usuário (público) se o token for válido, a conta estiver ativa e a senha não mudou."""
     if not token:
-        return False
+        return None
     try:
         raw = base64.urlsafe_b64decode(token.encode()).decode()
-        expires_at, role, sig = raw.split(":")
+        expires_at, user_id, fingerprint, sig = raw.split(":")
         if time.time() > int(expires_at):
-            return False
-        expected = hmac.new(_signing_key(), f"{expires_at}:{role}".encode(), hashlib.sha256).hexdigest()
-        return hmac.compare_digest(sig, expected)
+            return None
+        expected = hmac.new(_SECRET, f"{expires_at}:{user_id}:{fingerprint}".encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        user = database.get_user_auth(int(user_id))
     except Exception:
-        return False
+        return None
+    if not user or not user["active"] or not hmac.compare_digest(fingerprint, _fingerprint(user)):
+        return None
+    return public_user(user)
 
 
-def require_auth(request: Request, token: Optional[str] = Query(None)) -> None:
-    """Dependência FastAPI: aceita 'Authorization: Bearer <token>' ou ?token=."""
+def _token_from(request: Request, token: Optional[str]) -> Optional[str]:
     header = request.headers.get("authorization", "")
     if header.lower().startswith("bearer "):
-        token = header[7:].strip()
-    if not verify_token(token):
+        return header[7:].strip()
+    return token
+
+
+def require_auth_any(request: Request, token: Optional[str] = Query(None)) -> Dict[str, Any]:
+    """Usuário logado (mesmo que ainda precise trocar a senha provisória)."""
+    user = verify_token(_token_from(request, token))
+    if not user:
         raise HTTPException(status_code=401, detail="Não autorizado")
+    return user
+
+
+def require_auth(user: Dict[str, Any] = Depends(require_auth_any)) -> Dict[str, Any]:
+    """Usuário logado que já trocou a senha provisória."""
+    if user["must_change"]:
+        raise HTTPException(status_code=403, detail="Troque a senha provisória para continuar.")
+    return user
+
+
+def require_admin(user: Dict[str, Any] = Depends(require_auth)) -> Dict[str, Any]:
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Só administradores podem fazer isto.")
+    return user
 
 
 def check_agent_key(provided: Optional[str]) -> bool:
@@ -60,7 +89,7 @@ def check_agent_key(provided: Optional[str]) -> bool:
 
 
 class RateLimiter:
-    """Bloqueia um IP por `window` segundos após `max_fails` falhas seguidas."""
+    """Bloqueia uma chave (IP) por `window` segundos após `max_fails` falhas seguidas."""
 
     def __init__(self, max_fails: int = 5, window: int = 60):
         self.max_fails = max_fails

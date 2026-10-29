@@ -148,22 +148,28 @@ class DatabaseTests(unittest.TestCase):
 
 
 class AuthTests(unittest.TestCase):
-    def test_token_roundtrip_and_tamper(self):
-        token = auth.create_access_token()
-        self.assertTrue(auth.verify_token(token))
-        self.assertFalse(auth.verify_token(token[:-4] + "AAAA"))
-        self.assertFalse(auth.verify_token(""))
-        self.assertFalse(auth.verify_token("lixo"))
+    @classmethod
+    def setUpClass(cls):
+        database.init_db()
 
-    def test_token_invalid_after_password_change(self):
-        token = auth.create_access_token()
-        old = auth.CONFIG["admin_password"]
-        try:
-            auth.CONFIG["admin_password"] = "outra-senha"
-            self.assertFalse(auth.verify_token(token))
-        finally:
-            auth.CONFIG["admin_password"] = old
+    def test_token_roundtrip_and_tamper(self):
+        token = auth.create_access_token(database.get_user_by_email("admin"))
+        self.assertEqual(auth.verify_token(token)["email"], "admin")
+        self.assertIsNone(auth.verify_token(token[:-4] + "AAAA"))
+        self.assertIsNone(auth.verify_token(""))
+        self.assertIsNone(auth.verify_token("lixo"))
+
+    def test_token_invalid_after_password_change_or_deactivation(self):
+        ok, user = database.create_user("tok@escola.org", "Pessoa Token", "admin", "senha-longa-1", must_change=False)
+        self.assertTrue(ok)
+        token = auth.create_access_token(database.get_user_by_email("tok@escola.org"))
         self.assertTrue(auth.verify_token(token))
+        database.set_user_password(user["id"], "outra-senha-2", False)
+        self.assertIsNone(auth.verify_token(token))               # trocar a senha derruba as sessões
+        token = auth.create_access_token(database.get_user_by_email("tok@escola.org"))
+        self.assertTrue(auth.verify_token(token))
+        database.update_user(user["id"], "Pessoa Token", "admin", False)
+        self.assertIsNone(auth.verify_token(token))               # conta desativada
 
     def test_rate_limiter(self):
         limiter = auth.RateLimiter(max_fails=3, window=60)
@@ -188,7 +194,7 @@ class ServerTests(unittest.TestCase):
             except OSError:
                 time.sleep(0.1)
         main.login_limiter._fails.clear()
-        status, data = call("POST", "/api/login", {"password": "teste123"})
+        status, data = call("POST", "/api/login", {"email": "admin", "password": "teste123"})
         assert status == 200, data
         cls.token = data["token"]
 
@@ -204,7 +210,7 @@ class ServerTests(unittest.TestCase):
 
     def test_wrong_password_rate_limited(self):
         main.login_limiter._fails.clear()
-        codes = [call("POST", "/api/login", {"password": "errada"})[0] for _ in range(6)]
+        codes = [call("POST", "/api/login", {"email": "admin", "password": "errada"})[0] for _ in range(6)]
         self.assertEqual(codes[0], 401)
         self.assertEqual(codes[-1], 429)
         main.login_limiter._fails.clear()
@@ -301,23 +307,94 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(data["sent_count"], 1)
 
     def test_password_change_api(self):
-        url = "/api/admin/password"
+        url = "/api/me/password"
         main.login_limiter._fails.clear()
-        self.assertEqual(call("POST", url, {"current_password": "x", "new_password": "nova123"}, self.token)[0], 400)
-        self.assertEqual(call("POST", url, {"current_password": "teste123", "new_password": "123"}, self.token)[0], 400)
-        status, data = call("POST", url, {"current_password": "teste123", "new_password": "nova123"}, self.token)
+        self.assertEqual(call("POST", url, {"current_password": "x", "new_password": "nova12345"}, self.token)[0], 400)
+        self.assertEqual(call("POST", url, {"current_password": "teste123", "new_password": "curta"}, self.token)[0], 400)
+        status, data = call("POST", url, {"current_password": "teste123", "new_password": "nova12345"}, self.token)
         self.assertEqual(status, 200)
         new_token = data["token"]
         try:
             self.assertEqual(call("GET", "/api/students", token=self.token)[0], 401)   # token antigo morreu
             self.assertEqual(call("GET", "/api/students", token=new_token)[0], 200)
-            with open(os.path.join(DATA, "server_config.json"), encoding="utf-8") as f:
-                self.assertEqual(json.load(f)["admin_password"], "nova123")
+            self.assertEqual(call("POST", "/api/login", {"email": "admin", "password": "teste123"})[0], 401)
         finally:
-            status, data = call("POST", url, {"current_password": "nova123", "new_password": "teste123"}, new_token)
+            status, data = call("POST", url, {"current_password": "nova12345", "new_password": "teste123"}, new_token)
             self.assertEqual(status, 200)
             type(self).token = data["token"]
             main.login_limiter._fails.clear()
+
+    def test_team_accounts_flow(self):
+        main.login_limiter._fails.clear()
+        # administrador cria contas: senha provisória aparece uma única vez
+        status, data = call("POST", "/api/users", {"email": "Ana.Tecnica@Escola.org", "name": "Ana Técnica", "role": "operador"},
+                            self.token)
+        self.assertEqual(status, 200)
+        ana, temp = data["user"], data["user"]["temp_password"]
+        self.assertEqual(ana["email"], "ana.tecnica@escola.org")
+        self.assertTrue(len(temp) >= 10)
+        self.assertEqual(call("POST", "/api/users", {"email": "ana.tecnica@escola.org", "name": "Repetida"}, self.token)[0], 400)
+        self.assertEqual(call("POST", "/api/users", {"email": "sem-arroba", "name": "X"}, self.token)[0], 400)
+        self.assertNotIn("password_hash", json.dumps(call("GET", "/api/users", token=self.token)[1]))
+
+        # login com senha provisória: só consegue trocar a senha
+        status, login = call("POST", "/api/login", {"email": "ANA.TECNICA@escola.org", "password": temp})
+        self.assertEqual(status, 200)
+        self.assertTrue(login["user"]["must_change"])
+        tok = login["token"]
+        self.assertEqual(call("GET", "/api/students", token=tok)[0], 403)
+        self.assertEqual(call("POST", "/api/me/password", {"current_password": temp, "new_password": "SenhaNova123"}, tok)[0], 200)
+        status, login = call("POST", "/api/login", {"email": "ana.tecnica@escola.org", "password": "SenhaNova123"})
+        self.assertEqual(status, 200)
+        self.assertFalse(login["user"]["must_change"])
+        tok = login["token"]
+        self.assertEqual(call("GET", "/api/students", token=tok)[0], 200)
+
+        # operador não apaga alunos, não importa, não mexe nas regras nem na equipe
+        self.assertEqual(call("DELETE", "/api/students/999999", token=tok)[0], 403)
+        self.assertEqual(call("POST", "/api/students/bulk-delete", {"ids": [1]}, tok)[0], 403)
+        self.assertEqual(call("PUT", "/api/rules", {"enabled": False, "programs": [], "sites": []}, tok)[0], 403)
+        self.assertEqual(call("GET", "/api/users", token=tok)[0], 403)
+        self.assertEqual(call("GET", "/api/audit", token=tok)[0], 403)
+        # ...mas cadastra aluno e usa o painel
+        status, st = call("POST", "/api/students", {"name": "Aluno do Operador", "matricula": "OP-1", "password": "x"}, tok)
+        self.assertEqual(status, 200)
+
+        # desativar derruba a sessão e impede novo login
+        self.assertEqual(call("PUT", f"/api/users/{ana['id']}", {"name": "Ana Técnica", "role": "operador", "active": False},
+                              self.token)[0], 200)
+        self.assertEqual(call("GET", "/api/students", token=tok)[0], 401)
+        self.assertEqual(call("POST", "/api/login", {"email": "ana.tecnica@escola.org", "password": "SenhaNova123"})[0], 401)
+
+        # redefinir senha gera nova provisória e exige troca
+        self.assertEqual(call("PUT", f"/api/users/{ana['id']}", {"name": "Ana Técnica", "role": "operador", "active": True},
+                              self.token)[0], 200)
+        status, reset = call("POST", f"/api/users/{ana['id']}/reset-password", token=self.token)
+        self.assertEqual(status, 200)
+        status, login = call("POST", "/api/login", {"email": "ana.tecnica@escola.org", "password": reset["temp_password"]})
+        self.assertTrue(login["user"]["must_change"])
+
+        # o registro mostra quem fez o quê
+        actions = [(r["user_email"], r["action"]) for r in call("GET", "/api/audit", token=self.token)[1]["records"]]
+        self.assertIn(("ana.tecnica@escola.org", "cadastrou aluno"), actions)
+        self.assertIn(("admin", "criou conta"), actions)
+
+        # nunca fica sem administrador, nem exclui a si mesmo
+        me = next(u for u in call("GET", "/api/users", token=self.token)[1]["users"] if u["email"] == "admin")
+        self.assertEqual(call("DELETE", f"/api/users/{me['id']}", token=self.token)[0], 400)
+        self.assertEqual(call("DELETE", f"/api/users/{ana['id']}", token=self.token)[0], 200)
+
+    def test_last_admin_is_protected(self):
+        users = database.list_users()
+        admins = [u for u in users if u["role"] == "admin" and u["active"]]
+        for extra in admins[1:]:
+            database.update_user(extra["id"], extra["name"], "operador", True)
+        sole = admins[0]
+        self.assertFalse(database.update_user(sole["id"], sole["name"], "operador", True)[0])
+        self.assertFalse(database.update_user(sole["id"], sole["name"], "admin", False)[0])
+        self.assertFalse(database.delete_user(sole["id"])[0])
+        for extra in admins[1:]:
+            database.update_user(extra["id"], extra["name"], "admin", True)
 
     def test_students_import_export_api(self):
         csv_bytes = "Matrícula;Nome;Turma\nAPI-I1;Rita Import;9A\n".encode("cp1252")

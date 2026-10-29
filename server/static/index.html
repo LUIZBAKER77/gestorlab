@@ -14,6 +14,7 @@
       background-position: center;
       background-repeat: no-repeat;
     }
+    body.role-operador .admin-only { display: none !important; }
     .remote-active {
       cursor: crosshair !important;
       outline: 3px solid #10b981 !important;
@@ -36,15 +37,23 @@
           <img src="/static/logo.png" alt="GestorLab Logo" class="w-full h-full object-contain rounded-xl">
         </div>
         <h1 class="text-2xl font-bold tracking-tight text-white mb-1">GestorLab</h1>
-        <p class="text-xs text-indigo-400 font-medium tracking-wide uppercase">Painel do Professor • Laboratório</p>
-        <p class="text-xs text-slate-400 mt-2">Digite a senha para acessar o controle dos computadores</p>
+        <p class="text-xs text-indigo-400 font-medium tracking-wide uppercase">Painel da Equipe do TE • Laboratório</p>
+        <p class="text-xs text-slate-400 mt-2">Entre com seu e-mail e sua senha para controlar os computadores</p>
       </div>
 
       <!-- Formulário de Login -->
       <form id="login-form" class="space-y-5" onsubmit="handleLoginSubmit(event)">
         <div>
+          <label for="login-email" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+            E-mail
+          </label>
+          <input id="login-email" type="text" required autocomplete="username" autocapitalize="none" spellcheck="false"
+                 placeholder="nome@redesc-edu.org.br"
+                 class="w-full bg-slate-950/80 border border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 transition outline-none">
+        </div>
+        <div>
           <label for="login-password" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-            Senha de Acesso
+            Senha
           </label>
           <div class="relative">
             <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
@@ -136,7 +145,7 @@
           <div>
             <div class="flex items-center space-x-2">
               <h1 class="text-xl font-bold tracking-tight text-white">GestorLab</h1>
-              <span class="text-xs bg-indigo-500/20 text-indigo-300 font-medium px-2 py-0.5 rounded-full border border-indigo-500/30">Professor Pro</span>
+              <span class="text-xs bg-indigo-500/20 text-indigo-300 font-medium px-2 py-0.5 rounded-full border border-indigo-500/30">Equipe TE</span>
             </div>
             <p class="text-xs text-slate-400">Laboratório de Informática • Windows 10 Pro</p>
           </div>
@@ -184,6 +193,12 @@
             </svg>
             <span>Regras</span>
             <span id="rules-status-dot" class="w-2 h-2 rounded-full bg-slate-600" title="Regras desativadas"></span>
+          </button>
+          <button id="tab-btn-team" onclick="switchNavTab('team')" class="admin-only flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+            <span>Equipe</span>
           </button>
         </nav>
 
@@ -259,6 +274,10 @@
 
         <!-- Configurações e Logout: fora de "monitoring-actions" para continuarem visíveis em todas as abas -->
         <div class="flex items-center gap-2">
+          <div class="text-right leading-tight hidden md:block">
+            <div id="user-name" class="text-xs font-semibold text-slate-200"></div>
+            <div id="user-role" class="text-[10px] text-slate-500"></div>
+          </div>
           <button id="btn-settings" onclick="openSettingsModal()" title="Configurações do painel" class="flex items-center space-x-1.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-900 text-slate-300 hover:text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-700 transition">
             <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
@@ -282,11 +301,6 @@
     <!-- Main Area -->
     <main class="flex-1 max-w-7xl w-full mx-auto p-6">
 
-      <!-- Aviso de senha padrão -->
-      <div id="default-password-banner" class="hidden mb-5 bg-amber-950/60 border border-amber-500/40 text-amber-200 text-xs rounded-xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
-        <span>⚠️ O painel ainda usa a <strong>senha padrão</strong>. Qualquer pessoa que a conheça pode controlar os computadores.</span>
-        <button onclick="openSettingsModal()" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold px-3 py-1.5 rounded-lg transition">Trocar senha agora</button>
-      </div>
 
       <!-- ========================================== -->
       <!-- ABA 1: MONITORAMENTO DE COMPUTADORES -->
@@ -364,7 +378,7 @@
             </div>
 
             <!-- Botão Excluir Selecionados (Massa) -->
-            <button id="btn-bulk-delete-students" onclick="confirmBulkDeleteStudents()" class="hidden items-center space-x-1.5 bg-red-600/90 hover:bg-red-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow-md shadow-red-600/20">
+            <button id="btn-bulk-delete-students" onclick="confirmBulkDeleteStudents()" class="admin-only hiddenitems-center space-x-1.5 bg-red-600/90 hover:bg-red-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow-md shadow-red-600/20">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
               </svg>
@@ -372,7 +386,7 @@
             </button>
 
             <!-- Importar / Exportar planilha -->
-            <button onclick="openImportModal()" title="Cadastrar vários alunos de uma planilha (CSV)" class="flex items-center space-x-1.5 bg-slate-700 hover:bg-slate-600 text-slate-100 text-xs font-semibold px-3 py-2 rounded-lg transition border border-slate-600 cursor-pointer">
+            <button onclick="openImportModal()" data-admin-only title="Cadastrar vários alunos de uma planilha (CSV)" class="flex items-center space-x-1.5 bg-slate-700 hover:bg-slate-600 text-slate-100 text-xs font-semibold px-3 py-2 rounded-lg transition border border-slate-600 cursor-pointer">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
               </svg>
@@ -522,7 +536,7 @@
 
         <div class="flex items-center justify-end gap-3 mt-4">
           <span id="rules-save-status" class="text-xs text-slate-400"></span>
-          <button id="rules-save-btn" onclick="saveRules()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-5 py-2 rounded-lg transition shadow-md shadow-indigo-600/20">Salvar e aplicar em todos os PCs</button>
+          <button id="rules-save-btn" onclick="saveRules()" class="admin-only bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-5 py-2 rounded-lg transition shadow-md shadow-indigo-600/20">Salvar e aplicar em todos os PCs</button>
         </div>
 
         <div class="mt-8 bg-slate-800/80 border border-slate-700 rounded-2xl shadow-xl overflow-hidden">
@@ -545,6 +559,59 @@
             </table>
           </div>
           <div id="events-empty" class="hidden py-10 text-center text-xs text-slate-400">Nenhuma tentativa de uso de programa ou site bloqueado.</div>
+        </div>
+      </section>
+
+      <!-- ========================================== -->
+      <!-- ABA 5: EQUIPE (contas de acesso e registro de ações) -->
+      <!-- ========================================== -->
+      <section id="view-team" class="hidden">
+        <div class="flex items-center justify-between mb-6 flex-wrap gap-4">
+          <div>
+            <h2 class="text-lg font-bold text-white">Equipe do TE</h2>
+            <p class="text-xs text-slate-400 mt-0.5">Cada pessoa entra com a própria conta. A senha provisória é mostrada uma única vez e precisa ser trocada no primeiro acesso.</p>
+          </div>
+          <button onclick="openUserModal()" class="flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-md shadow-indigo-600/20">
+            <span>+ Nova Conta</span>
+          </button>
+        </div>
+
+        <div class="bg-slate-800/80 border border-slate-700 rounded-2xl shadow-xl overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-slate-300">
+              <thead class="bg-slate-900/80 text-[11px] uppercase tracking-wider text-slate-400 border-b border-slate-700">
+                <tr>
+                  <th class="py-3 px-4 font-semibold">Nome</th>
+                  <th class="py-3 px-4 font-semibold">E-mail</th>
+                  <th class="py-3 px-4 font-semibold">Perfil</th>
+                  <th class="py-3 px-4 font-semibold">Situação</th>
+                  <th class="py-3 px-4 font-semibold">Último acesso</th>
+                  <th class="py-3 px-4 font-semibold text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody id="users-table-body" class="divide-y divide-slate-700/60"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="mt-8 bg-slate-800/80 border border-slate-700 rounded-2xl shadow-xl overflow-hidden">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-slate-700">
+            <h3 class="text-sm font-bold text-white">Registro de ações</h3>
+            <button onclick="loadAudit()" class="text-xs text-indigo-300 hover:text-white">Atualizar</button>
+          </div>
+          <div class="overflow-x-auto max-h-96 overflow-y-auto">
+            <table class="w-full text-left text-sm text-slate-300">
+              <thead class="bg-slate-900/80 text-[11px] uppercase tracking-wider text-slate-400 border-b border-slate-700 sticky top-0">
+                <tr>
+                  <th class="py-2.5 px-4 font-semibold">Quando</th>
+                  <th class="py-2.5 px-4 font-semibold">Quem</th>
+                  <th class="py-2.5 px-4 font-semibold">Ação</th>
+                  <th class="py-2.5 px-4 font-semibold">Detalhe</th>
+                </tr>
+              </thead>
+              <tbody id="audit-table-body" class="divide-y divide-slate-700/60"></tbody>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -858,25 +925,25 @@
     <div id="modal-settings" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4 hidden">
       <form onsubmit="submitChangePassword(event)" class="bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
         <div class="flex items-center justify-between">
-          <h3 class="text-base font-bold text-white">⚙️ Configurações do Painel</h3>
-          <button type="button" onclick="closeSettingsModal()" class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+          <h3 id="settings-title" class="text-base font-bold text-white">⚙️ Minha Senha</h3>
+          <button id="settings-close-x" type="button" onclick="closeSettingsModal()" class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
         </div>
-        <p class="text-xs text-slate-400">Trocar a senha encerra as sessões abertas em outros navegadores.</p>
+        <p id="settings-note" class="text-xs text-slate-400">Trocar a senha encerra as sessões abertas em outros navegadores.</p>
         <div>
           <label for="settings-current" class="block text-xs font-medium text-slate-400 mb-1">Senha atual</label>
           <input id="settings-current" type="password" autocomplete="current-password" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
         </div>
         <div>
-          <label for="settings-new" class="block text-xs font-medium text-slate-400 mb-1">Nova senha (mínimo 6 caracteres)</label>
-          <input id="settings-new" type="password" autocomplete="new-password" minlength="6" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+          <label for="settings-new" class="block text-xs font-medium text-slate-400 mb-1">Nova senha (mínimo 8 caracteres)</label>
+          <input id="settings-new" type="password" autocomplete="new-password" minlength="8" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
         </div>
         <div>
           <label for="settings-confirm" class="block text-xs font-medium text-slate-400 mb-1">Repita a nova senha</label>
-          <input id="settings-confirm" type="password" autocomplete="new-password" minlength="6" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+          <input id="settings-confirm" type="password" autocomplete="new-password" minlength="8" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
         </div>
         <div id="settings-error" class="hidden bg-red-950/60 border border-red-500/30 rounded-xl p-2.5 text-xs text-red-300"></div>
         <div class="flex justify-end space-x-2">
-          <button type="button" onclick="closeSettingsModal()" class="px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-700 rounded-lg">Cancelar</button>
+          <button id="settings-cancel" type="button" onclick="closeSettingsModal()" class="px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-700 rounded-lg">Cancelar</button>
           <button type="submit" id="settings-save-btn" class="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg">Salvar Nova Senha</button>
         </div>
       </form>
@@ -907,6 +974,52 @@
           <button type="submit" id="import-submit-btn" class="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg">Importar</button>
         </div>
       </form>
+    </div>
+
+    <!-- Modal: Nova conta da equipe -->
+    <div id="modal-user" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4 hidden">
+      <form onsubmit="submitCreateUser(event)" class="bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+        <div class="flex items-center justify-between">
+          <h3 class="text-base font-bold text-white">Nova conta da equipe</h3>
+          <button type="button" onclick="closeUserModal()" class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+        </div>
+        <div>
+          <label for="user-form-name" class="block text-xs font-medium text-slate-400 mb-1">Nome completo</label>
+          <input id="user-form-name" type="text" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+          <label for="user-form-email" class="block text-xs font-medium text-slate-400 mb-1">E-mail</label>
+          <input id="user-form-email" type="email" required autocapitalize="none" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+          <label for="user-form-role" class="block text-xs font-medium text-slate-400 mb-1">Perfil</label>
+          <select id="user-form-role" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+            <option value="admin">Administrador (tudo, inclusive excluir alunos, regras e equipe)</option>
+            <option value="operador">Operador (usa o painel; não exclui alunos nem altera regras)</option>
+          </select>
+        </div>
+        <div id="user-form-error" class="hidden bg-red-950/60 border border-red-500/30 rounded-xl p-2.5 text-xs text-red-300"></div>
+        <div class="flex justify-end space-x-2">
+          <button type="button" onclick="closeUserModal()" class="px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-700 rounded-lg">Cancelar</button>
+          <button type="submit" id="user-form-save" class="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg">Criar Conta</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Modal: senha provisória (mostrada uma única vez) -->
+    <div id="modal-temp-password" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-[75] flex items-center justify-center p-4 hidden">
+      <div class="bg-slate-800 border border-amber-500/40 rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+        <h3 class="text-base font-bold text-white">🔑 Senha provisória</h3>
+        <p class="text-xs text-slate-300">Entregue à pessoa abaixo. <strong class="text-amber-300">Ela só aparece agora</strong>; no primeiro acesso será obrigatório criar uma senha própria.</p>
+        <div class="text-xs text-slate-400">E-mail: <span id="temp-pass-email" class="font-mono text-slate-200"></span></div>
+        <div class="flex items-center gap-2">
+          <input id="temp-pass-value" type="text" readonly class="flex-1 font-mono text-lg tracking-wider bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-emerald-300 text-center">
+          <button type="button" onclick="copyTempPassword()" class="px-3 py-2 text-xs font-semibold bg-slate-700 hover:bg-slate-600 text-white rounded-lg">Copiar</button>
+        </div>
+        <div class="flex justify-end">
+          <button type="button" onclick="closeTempPassword()" class="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg">Já anotei, fechar</button>
+        </div>
+      </div>
     </div>
 
     <!-- Container de Notificações Toast -->
