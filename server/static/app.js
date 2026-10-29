@@ -6,6 +6,8 @@ let currentZoomId = null;
 let currentMsgTarget = "all";
 let currentFileTarget = "all";
 let authToken = null;
+let currentUser = null;           // {id, email, name, role, must_change}
+let forcedPasswordChange = false;  // true enquanto a senha provisória precisa ser trocada
 let reconnectTimer = null;
 let reconnectDelay = 2000;   // cresce até 15 s enquanto o servidor estiver fora do ar
 let isRemoteControlActive = false;
@@ -15,6 +17,7 @@ let lastMouseMoveTime = 0;
 const loginContainer = document.getElementById("login-container");
 const appContainer = document.getElementById("app-container");
 const loginForm = document.getElementById("login-form");
+const loginEmailInput = document.getElementById("login-email");
 const loginPasswordInput = document.getElementById("login-password");
 const loginRememberCheckbox = document.getElementById("login-remember");
 const loginErrorMsg = document.getElementById("login-error-msg");
@@ -120,6 +123,9 @@ function clearStoredToken() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
   sessionStorage.removeItem(AUTH_TOKEN_KEY);
   authToken = null;
+  currentUser = null;
+  forcedPasswordChange = false;
+  document.body.classList.remove("role-operador");
 }
 
 // Chamadas autenticadas à API: o token vai no cabeçalho (não na URL).
@@ -131,6 +137,7 @@ async function api(path, options = {}) {
     showLoginScreen("Sessão expirada. Digite a senha para continuar.");
     throw new Error("unauthorized");
   }
+  if (res.status === 403) showToast("Sem permissão", "Seu perfil não permite esta ação.", "warning");
   return res;
 }
 
@@ -182,11 +189,12 @@ function showAppScreen() {
 async function handleLoginSubmit(event) {
   if (event) event.preventDefault();
 
+  const email = loginEmailInput.value.trim();
   const password = loginPasswordInput.value;
   const remember = loginRememberCheckbox.checked;
 
-  if (!password) {
-    loginErrorText.textContent = "Digite a senha de acesso.";
+  if (!email || !password) {
+    loginErrorText.textContent = "Digite o e-mail e a senha.";
     loginErrorMsg.classList.remove("hidden");
     return;
   }
@@ -201,16 +209,14 @@ async function handleLoginSubmit(event) {
     const res = await fetch("/api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password, remember })
+      body: JSON.stringify({ email, password, remember })
     });
 
     const data = await res.json();
 
     if (res.ok && data.success && data.token) {
-      authToken = data.token;
-      saveToken(authToken, remember);
-      showAppScreen();
-      connectWebSocket();
+      saveToken(data.token, remember);
+      startSession(data.token, data.user);
     } else {
       loginErrorText.textContent = data.error || "Senha incorreta. Tente novamente.";
       loginErrorMsg.classList.remove("hidden");
@@ -240,9 +246,7 @@ async function checkSavedAuth() {
     const res = await fetch("/api/verify-auth", { headers: { Authorization: `Bearer ${token}` } });
     const data = await res.json();
     if (res.ok && data.valid) {
-      authToken = token;
-      showAppScreen();
-      connectWebSocket();
+      startSession(token, data.user);
     } else {
       clearStoredToken();
       showLoginScreen("Sessão expirada. Digite a senha para continuar.");
@@ -255,7 +259,7 @@ async function checkSavedAuth() {
 }
 
 function logout() {
-  if (confirm("Deseja sair do Painel do Professor?")) {
+  if (confirm("Deseja sair do painel?")) {
     clearStoredToken();
     showLoginScreen();
   }
@@ -1142,14 +1146,15 @@ function escapeHtml(str) {
 // ==========================================
 let activeNavTab = "monitoring";
 
-const NAV_TABS = ["monitoring", "students", "attendance", "rules"];
+const NAV_TABS = ["monitoring", "students", "attendance", "rules", "team"];
 const NAV_ACTIVE = "flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow-md transition";
 const NAV_IDLE = "flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition";
 
 function switchNavTab(tab) {
   activeNavTab = tab;
   NAV_TABS.forEach(name => {
-    document.getElementById(`tab-btn-${name}`).className = (name === tab) ? NAV_ACTIVE : NAV_IDLE;
+    // A aba Equipe é só de administradores: a classe "admin-only" precisa sobreviver à troca de estilo.
+    document.getElementById(`tab-btn-${name}`).className = ((name === tab) ? NAV_ACTIVE : NAV_IDLE) + (name === "team" ? " admin-only" : "");
     document.getElementById(`view-${name}`).classList.toggle("hidden", name !== tab);
   });
   // Os botões globais (bloquear sala, FPS...) só fazem sentido na aba de computadores.
@@ -1159,6 +1164,7 @@ function switchNavTab(tab) {
   if (tab === "students") loadStudents();
   if (tab === "attendance") loadAttendance();
   if (tab === "rules") { loadRules(); loadEvents(); }
+  if (tab === "team") { loadUsers(); loadAudit(); }
 }
 
 // ==========================================
@@ -1253,7 +1259,7 @@ function renderStudentsTable() {
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
               </svg>
             </button>
-            <button onclick="openDeleteStudentModal(${s.id})" title="Excluir Aluno" class="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-700/60 rounded-lg transition cursor-pointer">
+            <button onclick="openDeleteStudentModal(${s.id})" title="Excluir Aluno" class="admin-only p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-700/60 rounded-lg transition cursor-pointer">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
               </svg>
@@ -1590,12 +1596,13 @@ async function loadServerInfo() {
     const res = await api("/api/server-info");
     const data = await res.json();
     maxUploadMb = data.max_upload_mb || 0;
-    document.getElementById("default-password-banner").classList.toggle("hidden", !data.default_password);
   } catch (e) { /* não crítico */ }
 }
 
 // Esc fecha o modal que está por cima (os de maior z-index primeiro).
 const MODAL_CLOSERS = [
+  ["modal-temp-password", () => closeTempPassword()],
+  ["modal-user", () => closeUserModal()],
   ["modal-student-delete", () => closeDeleteStudentModal()],
   ["modal-student-form", () => closeStudentModal()],
   ["modal-settings", () => closeSettingsModal()],
@@ -1726,14 +1733,22 @@ function saveSnapshot() {
 // ==========================================
 // Configurações: troca da senha do painel
 // ==========================================
-function openSettingsModal() {
+function openSettingsModal(forced = false) {
+  forcedPasswordChange = forced;
   ["settings-current", "settings-new", "settings-confirm"].forEach(id => { document.getElementById(id).value = ""; });
   document.getElementById("settings-error").classList.add("hidden");
+  document.getElementById("settings-title").textContent = forced ? "🔑 Crie sua senha" : "⚙️ Minha Senha";
+  document.getElementById("settings-note").textContent = forced
+    ? "Você entrou com uma senha provisória. Para continuar, crie uma senha só sua (digite a provisória no primeiro campo)."
+    : "Trocar a senha encerra as sessões abertas em outros navegadores.";
+  document.getElementById("settings-cancel").classList.toggle("hidden", forced);
+  document.getElementById("settings-close-x").classList.toggle("hidden", forced);
   document.getElementById("modal-settings").classList.remove("hidden");
   document.getElementById("settings-current").focus();
 }
 
 function closeSettingsModal() {
+  if (forcedPasswordChange) return;   // a troca da senha provisória é obrigatória
   document.getElementById("modal-settings").classList.add("hidden");
 }
 
@@ -1746,24 +1761,28 @@ async function submitChangePassword(event) {
   const showError = (msg) => { errorBox.textContent = msg; errorBox.classList.remove("hidden"); };
 
   if (next !== confirmNext) return showError("As duas novas senhas não são iguais.");
-  if (next.trim().length < 6) return showError("A nova senha precisa ter pelo menos 6 caracteres.");
+  if (next.trim().length < 8) return showError("A nova senha precisa ter pelo menos 8 caracteres.");
 
   const btn = document.getElementById("settings-save-btn");
   btn.disabled = true;
   try {
-    const res = await api("/api/admin/password", {
+    const res = await api("/api/me/password", {
       method: "POST", ...jsonBody({ current_password: current, new_password: next })
     });
     const data = await res.json();
     if (res.ok && data.success) {
+      const wasForced = forcedPasswordChange;
+      forcedPasswordChange = false;
       authToken = data.token;
-      saveToken(authToken, !!localStorage.getItem(AUTH_TOKEN_KEY));
-      closeSettingsModal();
-      document.getElementById("default-password-banner").classList.add("hidden");
-      // O servidor fecha os painéis abertos; este reconecta sozinho já com o token novo.
+      currentUser = data.user;
+      saveToken(authToken, !sessionStorage.getItem(AUTH_TOKEN_KEY));
+      document.getElementById("modal-settings").classList.add("hidden");
+      applyUserUI();
       showToast("Senha alterada", "A nova senha já está valendo.", "success");
+      // Se já havia painel aberto, o servidor o fecha e ele reconecta sozinho com o token novo.
+      if (wasForced) connectWebSocket();
     } else {
-      showError(data.error || "Não foi possível alterar a senha.");
+      showError(data.error || data.detail || "Não foi possível alterar a senha.");
     }
   } catch (e) {
     if (e.message !== "unauthorized") showError("Erro de conexão com o servidor.");
@@ -1969,6 +1988,195 @@ async function loadEvents() {
         <td class="py-2 px-4">${escapeHtml(ev.student_name) || "-"}</td>
         <td class="py-2 px-4 text-xs">${ev.kind === "site" ? "🌐 Site" : "🚫 Programa"}</td>
         <td class="py-2 px-4 font-mono text-xs text-amber-300">${escapeHtml(ev.detail)}</td>
+      </tr>`).join("");
+  } catch (e) { /* não crítico */ }
+}
+
+// ==========================================
+// Sessão e perfil do usuário logado
+// ==========================================
+const ROLE_LABELS = { admin: "Administrador", operador: "Operador" };
+
+function startSession(token, user) {
+  authToken = token;
+  currentUser = user || null;
+  applyUserUI();
+  showAppScreen();
+  if (user && user.must_change) {
+    openSettingsModal(true);   // sem trocar a senha provisória não há painel
+    return;
+  }
+  connectWebSocket();
+}
+
+function applyUserUI() {
+  const user = currentUser;
+  const isAdmin = !!user && user.role === "admin";
+  document.body.classList.toggle("role-operador", !!user && !isAdmin);
+  document.getElementById("user-name").textContent = user ? user.name : "";
+  document.getElementById("user-role").textContent = user ? `${ROLE_LABELS[user.role] || user.role} · ${user.email}` : "";
+  document.querySelectorAll("[data-admin-only]").forEach(el => { el.style.display = isAdmin || !user ? "" : "none"; });
+  ["rules-enabled", "rules-programs", "rules-sites"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !!user && !isAdmin;
+  });
+}
+
+// ==========================================
+// Equipe: contas, senhas provisórias e registro de ações
+// ==========================================
+let teamUsers = [];
+
+function formatDate(value) {
+  return value ? escapeHtml(value) : '<span class="text-slate-500">nunca</span>';
+}
+
+async function loadUsers() {
+  try {
+    const res = await api("/api/users");
+    const data = await res.json();
+    if (!res.ok || !data.success) return;
+    teamUsers = data.users;
+    document.getElementById("users-table-body").innerHTML = teamUsers.map(u => {
+      const isMe = currentUser && u.id === currentUser.id;
+      const status = !u.active
+        ? '<span class="text-red-400">Desativada</span>'
+        : u.must_change ? '<span class="text-amber-300">Aguardando 1º acesso</span>' : '<span class="text-emerald-400">Ativa</span>';
+      const btn = "text-[11px] px-2 py-1 rounded-lg border border-slate-600 text-slate-200 hover:bg-slate-700";
+      return `
+        <tr class="hover:bg-slate-700/30" data-user-id="${u.id}">
+          <td class="py-2.5 px-4 font-medium text-white">${escapeHtml(u.name)}${isMe ? ' <span class="text-[10px] text-indigo-300">(você)</span>' : ""}</td>
+          <td class="py-2.5 px-4 font-mono text-xs">${escapeHtml(u.email)}</td>
+          <td class="py-2.5 px-4 text-xs">${escapeHtml(ROLE_LABELS[u.role] || u.role)}</td>
+          <td class="py-2.5 px-4 text-xs">${status}</td>
+          <td class="py-2.5 px-4 text-xs">${formatDate(u.last_login)}</td>
+          <td class="py-2.5 px-4 text-right whitespace-nowrap space-x-1">
+            <button data-user-action="reset" class="${btn}">Nova senha</button>
+            ${isMe ? "" : `<button data-user-action="role" class="${btn}">${u.role === "admin" ? "Tornar operador" : "Tornar admin"}</button>
+            <button data-user-action="active" class="${btn}">${u.active ? "Desativar" : "Ativar"}</button>
+            <button data-user-action="delete" class="${btn} hover:text-red-300">Excluir</button>`}
+          </td>
+        </tr>`;
+    }).join("");
+  } catch (e) { /* não crítico */ }
+}
+
+document.getElementById("users-table-body").addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-user-action]");
+  const row = btn && btn.closest("[data-user-id]");
+  if (!row) return;
+  const user = teamUsers.find(u => u.id === Number(row.dataset.userId));
+  if (!user) return;
+  try {
+    switch (btn.dataset.userAction) {
+      case "reset": {
+        if (!confirm(`Gerar uma nova senha provisória para ${user.name}? A senha atual deixa de funcionar.`)) return;
+        const res = await api(`/api/users/${user.id}/reset-password`, { method: "POST" });
+        const data = await res.json();
+        if (res.ok && data.success) { showTempPassword(user.email, data.temp_password); loadUsers(); }
+        else showToast("Erro", data.error || "Não foi possível redefinir.", "error");
+        break;
+      }
+      case "role":
+      case "active": {
+        const role = btn.dataset.userAction === "role" ? (user.role === "admin" ? "operador" : "admin") : user.role;
+        const active = btn.dataset.userAction === "active" ? !user.active : user.active;
+        const res = await api(`/api/users/${user.id}`, { method: "PUT", ...jsonBody({ name: user.name, role, active }) });
+        const data = await res.json();
+        if (!(res.ok && data.success)) showToast("Erro", data.error || "Não foi possível alterar.", "error");
+        loadUsers();
+        break;
+      }
+      case "delete": {
+        if (!confirm(`Excluir a conta de ${user.name}? Isto não pode ser desfeito.`)) return;
+        const res = await api(`/api/users/${user.id}`, { method: "DELETE" });
+        const data = await res.json();
+        if (!(res.ok && data.success)) showToast("Erro", data.error || "Não foi possível excluir.", "error");
+        loadUsers();
+        break;
+      }
+    }
+  } catch (err) {
+    if (err.message !== "unauthorized") showToast("Erro", "Falha de comunicação com o servidor.", "error");
+  }
+});
+
+function openUserModal() {
+  ["user-form-name", "user-form-email"].forEach(id => { document.getElementById(id).value = ""; });
+  document.getElementById("user-form-role").value = "admin";
+  document.getElementById("user-form-error").classList.add("hidden");
+  document.getElementById("modal-user").classList.remove("hidden");
+  document.getElementById("user-form-name").focus();
+}
+
+function closeUserModal() {
+  document.getElementById("modal-user").classList.add("hidden");
+}
+
+async function submitCreateUser(event) {
+  event.preventDefault();
+  const payload = {
+    name: document.getElementById("user-form-name").value.trim(),
+    email: document.getElementById("user-form-email").value.trim(),
+    role: document.getElementById("user-form-role").value,
+  };
+  const errorBox = document.getElementById("user-form-error");
+  const btn = document.getElementById("user-form-save");
+  btn.disabled = true;
+  try {
+    const res = await api("/api/users", { method: "POST", ...jsonBody(payload) });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      closeUserModal();
+      showTempPassword(data.user.email, data.user.temp_password);
+      loadUsers();
+    } else {
+      errorBox.textContent = data.error || "Não foi possível criar a conta.";
+      errorBox.classList.remove("hidden");
+    }
+  } catch (e) {
+    if (e.message !== "unauthorized") {
+      errorBox.textContent = "Erro de conexão com o servidor.";
+      errorBox.classList.remove("hidden");
+    }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function showTempPassword(email, password) {
+  document.getElementById("temp-pass-email").textContent = email;
+  document.getElementById("temp-pass-value").value = password;
+  document.getElementById("modal-temp-password").classList.remove("hidden");
+}
+
+function closeTempPassword() {
+  document.getElementById("temp-pass-value").value = "";   // não deixa a senha na tela
+  document.getElementById("modal-temp-password").classList.add("hidden");
+}
+
+async function copyTempPassword() {
+  const input = document.getElementById("temp-pass-value");
+  try {
+    await navigator.clipboard.writeText(input.value);
+  } catch (e) {
+    input.select();
+    document.execCommand("copy");
+  }
+  showToast("Copiada", "Senha provisória copiada.", "success");
+}
+
+async function loadAudit() {
+  try {
+    const res = await api("/api/audit");
+    const data = await res.json();
+    if (!res.ok || !data.success) return;
+    document.getElementById("audit-table-body").innerHTML = data.records.map(r => `
+      <tr class="hover:bg-slate-700/30">
+        <td class="py-2 px-4 text-xs whitespace-nowrap">${escapeHtml(r.at)}</td>
+        <td class="py-2 px-4 text-xs">${escapeHtml(r.user_name || r.user_email)}</td>
+        <td class="py-2 px-4 text-xs">${escapeHtml(r.action)}</td>
+        <td class="py-2 px-4 text-xs text-slate-400">${escapeHtml(r.detail)}</td>
       </tr>`).join("");
   } catch (e) { /* não crítico */ }
 }

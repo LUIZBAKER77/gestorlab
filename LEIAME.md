@@ -12,7 +12,7 @@ Cada pacote é **um .exe + a pasta `app`** (Python embutido) + a pasta `dados` (
 2. Dê duplo clique em **`GestorLab Professor.exe`**. O painel abre no navegador.
 3. Pronto: o programa **inicia sozinho com o Windows** a partir daí (sem janela e sem abrir o navegador; para abrir o painel, dê duplo clique no .exe de novo ou acesse `http://localhost:8000`).
 
-Senha padrão do painel: `padrao#jf` — **troque** pelo botão **Configurações** no painel (o painel avisa enquanto a senha padrão estiver em uso). Trocar a senha encerra as sessões abertas em outros navegadores.
+Cada pessoa da equipe do TE entra no painel com o **próprio e-mail e senha**. Um administrador cadastra as contas na aba **Equipe**: o sistema mostra uma **senha provisória uma única vez** e a pessoa é obrigada a criar a própria senha no primeiro acesso (mínimo de 8 caracteres). A aba Equipe também mostra o **registro de ações** (quem bloqueou, enviou arquivo, mudou regras, apagou aluno etc.). Perfis: **Administrador** (tudo) e **Operador** (usa o painel, mas não exclui nem importa alunos, não muda as Regras e não gerencia a equipe). O sistema nunca fica sem administrador. Trocar a senha ou desativar a conta encerra as sessões abertas da pessoa. Numa instalação nova existe só a conta provisória `admin` (senha em `dados\server_config.json`): entre, crie as contas da equipe e exclua a `admin`.
 
 ## 👥 Computadores dos Alunos — pasta `2_ALUNO`
 

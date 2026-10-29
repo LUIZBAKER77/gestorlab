@@ -1,12 +1,13 @@
 import csv
 import hashlib
 import hmac
+import re
 import secrets
 import sqlite3
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from config import DB_PATH
+from config import CONFIG, DB_PATH, DEFAULT_PASSWORD
 
 PBKDF2_ROUNDS = 100_000
 PUBLIC_COLUMNS = "id, matricula, name, turma, created_at"
@@ -81,6 +82,31 @@ def init_db() -> None:
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_at ON events(at)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                salt TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'admin',
+                must_change INTEGER NOT NULL DEFAULT 1,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT (datetime('now', 'localtime')),
+                last_login TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                at TIMESTAMP NOT NULL DEFAULT (datetime('now', 'localtime')),
+                user_email TEXT NOT NULL,
+                user_name TEXT DEFAULT '',
+                action TEXT NOT NULL,
+                detail TEXT DEFAULT ''
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_at ON audit(at)")
         # Sessões que ficaram abertas (servidor desligado) são encerradas no último sinal
         # de vida registrado, e não mais com duração zero.
         conn.execute("UPDATE attendance SET logout_at = COALESCE(last_seen, login_at) WHERE logout_at IS NULL")
@@ -91,6 +117,14 @@ def init_db() -> None:
                 ("2026001", "Aluno Exemplo", "Turma A", pwd_hash, salt),
             )
             print("[GESTORLAB DB] Banco criado com aluno modelo (Matrícula: 2026001 / Senha: 123456). Exclua-o depois.")
+        if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
+            # Primeira execução: conta provisória "admin" com a senha do server_config.json.
+            # Entre com ela, cadastre a equipe em Equipe e apague esta conta.
+            pwd_hash, salt = hash_password(str(CONFIG["admin_password"]))
+            conn.execute(
+                "INSERT INTO users (email, name, password_hash, salt, role, must_change) VALUES (?, ?, ?, ?, 'admin', ?)",
+                ("admin", "Administrador inicial", pwd_hash, salt, 1 if CONFIG["admin_password"] == DEFAULT_PASSWORD else 0))
+            print("[GESTORLAB DB] Conta inicial criada: usuário 'admin' (senha do server_config.json).")
 
 
 def list_students(query: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -362,3 +396,140 @@ def list_attendance(start: Optional[str] = None, end: Optional[str] = None,
     sql += " ORDER BY login_at DESC LIMIT ?"
     with connect() as conn:
         return [dict(r) for r in conn.execute(sql, (*params, limit)).fetchall()]
+
+
+# ==========================================
+# Equipe do TE (contas de acesso ao painel) e registro de ações
+# ==========================================
+ROLES = ("admin", "operador")
+USER_PUBLIC = "id, email, name, role, must_change, active, created_at, last_login"
+TEMP_PASSWORD_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def generate_temp_password(length: int = 10) -> str:
+    return "".join(secrets.choice(TEMP_PASSWORD_ALPHABET) for _ in range(length))
+
+
+def normalize_email(email: str) -> str:
+    return (email or "").strip().lower()
+
+
+def _public_user(row) -> Optional[Dict[str, Any]]:
+    if not row:
+        return None
+    user = {k: row[k] for k in row.keys() if k not in ("password_hash", "salt")}
+    user["must_change"] = bool(user.get("must_change"))
+    user["active"] = bool(user.get("active"))
+    return user
+
+
+def count_users() -> int:
+    with connect() as conn:
+        return conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+
+def _active_admins(conn, excluding_id: Optional[int] = None) -> int:
+    sql = "SELECT COUNT(*) FROM users WHERE role = 'admin' AND active = 1"
+    params: tuple = ()
+    if excluding_id is not None:
+        sql += " AND id != ?"
+        params = (excluding_id,)
+    return conn.execute(sql, params).fetchone()[0]
+
+
+def get_user_auth(user_id: int) -> Optional[Dict[str, Any]]:
+    """Usuário com o hash da senha (só para uso interno de autenticação)."""
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE email = ?", (normalize_email(email),)).fetchone()
+        return dict(row) if row else None
+
+
+def list_users() -> List[Dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(f"SELECT {USER_PUBLIC} FROM users ORDER BY name COLLATE NOCASE").fetchall()
+        return [_public_user(r) for r in rows]
+
+
+def create_user(email: str, name: str, role: str = "admin", password: Optional[str] = None,
+                must_change: bool = True) -> Tuple[bool, Any]:
+    """Cria a conta. Sem senha informada, gera uma provisória (devolvida em 'temp_password')."""
+    email, name = normalize_email(email), " ".join((name or "").split())
+    if role not in ROLES:
+        return False, "Perfil inválido."
+    if not name:
+        return False, "Informe o nome."
+    if email != "admin" and not re.fullmatch(r"[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}", email):
+        return False, "Informe um e-mail válido."
+    temp = password or generate_temp_password()
+    pwd_hash, salt = hash_password(temp)
+    try:
+        with connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO users (email, name, password_hash, salt, role, must_change) VALUES (?, ?, ?, ?, ?, ?)",
+                (email, name, pwd_hash, salt, role, 1 if must_change else 0))
+            user = _public_user(conn.execute(f"SELECT {USER_PUBLIC} FROM users WHERE id = ?", (cur.lastrowid,)).fetchone())
+    except sqlite3.IntegrityError:
+        return False, f"Já existe uma conta com o e-mail {email}."
+    user["temp_password"] = None if password else temp
+    return True, user
+
+
+def update_user(user_id: int, name: str, role: str, active: bool) -> Tuple[bool, str]:
+    name = " ".join((name or "").split())
+    if not name or role not in ROLES:
+        return False, "Nome ou perfil inválido."
+    with connect() as conn:
+        if not conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
+            return False, "Usuário não encontrado."
+        if (role != "admin" or not active) and _active_admins(conn, excluding_id=user_id) == 0:
+            return False, "É preciso manter pelo menos um administrador ativo."
+        conn.execute("UPDATE users SET name = ?, role = ?, active = ? WHERE id = ?",
+                     (name, role, 1 if active else 0, user_id))
+    return True, "Usuário atualizado."
+
+
+def set_user_password(user_id: int, password: str, must_change: bool) -> bool:
+    pwd_hash, salt = hash_password(password)
+    with connect() as conn:
+        cur = conn.execute("UPDATE users SET password_hash = ?, salt = ?, must_change = ? WHERE id = ?",
+                           (pwd_hash, salt, 1 if must_change else 0, user_id))
+        return cur.rowcount > 0
+
+
+def reset_user_password(user_id: int) -> Optional[str]:
+    temp = generate_temp_password()
+    return temp if set_user_password(user_id, temp, True) else None
+
+
+def delete_user(user_id: int) -> Tuple[bool, str]:
+    with connect() as conn:
+        if not conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
+            return False, "Usuário não encontrado."
+        if _active_admins(conn, excluding_id=user_id) == 0:
+            return False, "É preciso manter pelo menos um administrador ativo."
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    return True, "Usuário removido."
+
+
+def touch_login(user_id: int) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE users SET last_login = datetime('now', 'localtime') WHERE id = ?", (user_id,))
+
+
+def record_audit(user_email: str, user_name: str, action: str, detail: str = "") -> None:
+    with connect() as conn:
+        conn.execute("INSERT INTO audit (user_email, user_name, action, detail) VALUES (?, ?, ?, ?)",
+                     (user_email, user_name, action, detail[:300]))
+        conn.execute("DELETE FROM audit WHERE id <= (SELECT MAX(id) FROM audit) - 20000")
+
+
+def list_audit(limit: int = 300) -> List[Dict[str, Any]]:
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT id, at, user_email, user_name, action, detail FROM audit ORDER BY id DESC LIMIT ?", (limit,))]

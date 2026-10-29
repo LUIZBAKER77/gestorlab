@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 import auth
 import database
-from config import CONFIG, DEFAULT_PASSWORD, STATIC_DIR, save_config
+from config import CONFIG, STATIC_DIR, save_config
 
 PORT = int(CONFIG["port"])
 DISCOVERY_PORT = int(CONFIG["discovery_port"])
@@ -50,8 +50,21 @@ PROTECTED_PROGRAMS = {
 # Modelos de requisição
 # ==========================================
 class LoginRequest(BaseModel):
+    email: str = Field(max_length=150)
     password: str = Field(max_length=200)
     remember: bool = True
+
+
+class UserCreateRequest(BaseModel):
+    email: str = Field(max_length=150)
+    name: str = Field(max_length=150)
+    role: str = Field("admin", max_length=20)
+
+
+class UserUpdateRequest(BaseModel):
+    name: str = Field(max_length=150)
+    role: str = Field(max_length=20)
+    active: bool = True
 
 
 class StudentCreateRequest(BaseModel):
@@ -93,6 +106,7 @@ class StudentVerifyLoginRequest(BaseModel):
 # ==========================================
 connected_clients: Dict[str, Dict[str, Any]] = {}
 dashboard_websockets = set()
+dashboard_users: Dict[Any, int] = {}   # conexão do painel -> id do usuário logado
 dashboard_busy = set()
 _background_tasks = set()
 
@@ -168,8 +182,6 @@ async def lifespan(_app: FastAPI):
     database.init_db()
     start_udp_discovery()
     heartbeat = asyncio.create_task(attendance_heartbeat())
-    if CONFIG["admin_password"] == DEFAULT_PASSWORD:
-        print("[GESTORLAB] AVISO: a senha do painel ainda é a padrão. Troque-a em Configurações, no painel.")
     yield
     heartbeat.cancel()
 
@@ -270,18 +282,45 @@ def rules_payload() -> dict:
 
 
 # ==========================================
-# Autenticação do professor
+# Contas da equipe do TE
 # ==========================================
+def audit(user: dict, action: str, detail: str = "") -> None:
+    """Registra quem fez o quê, sem atrasar a resposta."""
+    task = asyncio.create_task(asyncio.to_thread(database.record_audit, user["email"], user["name"], action, detail))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+def _check_login(user: Optional[dict], password: str) -> bool:
+    if not user:
+        database.hash_password(password)   # gasta o mesmo tempo: não revela quais e-mails existem
+        return False
+    return bool(user["active"]) and database.verify_password(password, user["password_hash"], user["salt"])
+
+
+async def kick_user(user_id: int, reason: str = "Sessão encerrada") -> None:
+    """Fecha os painéis abertos de um usuário (troca de senha, desativação)."""
+    for ws in [w for w, uid in dashboard_users.items() if uid == user_id]:
+        try:
+            await ws.close(code=4005, reason=reason)
+        except Exception:
+            pass
+
+
 @app.post("/api/login")
 async def api_login(req: LoginRequest, request: Request):
     ip = client_ip(request)
     if login_limiter.blocked(ip):
         return JSONResponse(status_code=429, content={"success": False, "error": "Muitas tentativas. Aguarde 1 minuto."})
-    if auth.check_admin_password(req.password):
+    user = await asyncio.to_thread(database.get_user_by_email, req.email)
+    if await asyncio.to_thread(_check_login, user, req.password):
         login_limiter.reset(ip)
-        return {"success": True, "token": auth.create_access_token(remember=req.remember)}
+        await asyncio.to_thread(database.touch_login, user["id"])
+        audit(user, "login", ip)
+        return {"success": True, "token": auth.create_access_token(user, remember=req.remember),
+                "user": auth.public_user(user)}
     login_limiter.fail(ip)
-    return JSONResponse(status_code=401, content={"success": False, "error": "Senha incorreta"})
+    return JSONResponse(status_code=401, content={"success": False, "error": "E-mail ou senha incorretos."})
 
 
 @app.get("/api/verify-auth")
@@ -289,8 +328,9 @@ async def api_verify_auth(request: Request, token: Optional[str] = Query(None)):
     header = request.headers.get("authorization", "")
     if header.lower().startswith("bearer "):
         token = header[7:].strip()
-    if auth.verify_token(token):
-        return {"valid": True}
+    user = await asyncio.to_thread(auth.verify_token, token)
+    if user:
+        return {"valid": True, "user": user}
     return JSONResponse(status_code=401, content={"valid": False})
 
 
@@ -304,41 +344,86 @@ async def get_server_info():
         "discovery_port": DISCOVERY_PORT,
         "total_clients": len(connected_clients),
         "clients": list(connected_clients.keys()),
-        "default_password": CONFIG["admin_password"] == DEFAULT_PASSWORD,
         "max_upload_mb": CONFIG["max_upload_mb"],
     }
 
 
-@app.post("/api/admin/password", dependencies=[Depends(auth.require_auth)])
-async def change_admin_password(req: ChangePasswordRequest, request: Request):
+@app.post("/api/me/password")
+async def change_my_password(req: ChangePasswordRequest, request: Request,
+                             user: dict = Depends(auth.require_auth_any)):
+    """Troca a própria senha (também usada na troca obrigatória da senha provisória)."""
     ip = client_ip(request)
     if login_limiter.blocked(ip):
         return JSONResponse(status_code=429, content={"success": False, "error": "Muitas tentativas. Aguarde 1 minuto."})
-    if not auth.check_admin_password(req.current_password):
+    full = await asyncio.to_thread(database.get_user_auth, user["id"])
+    if not await asyncio.to_thread(_check_login, full, req.current_password):
         login_limiter.fail(ip)
         return JSONResponse(status_code=400, content={"success": False, "error": "A senha atual está incorreta."})
     new = req.new_password.strip()
-    if len(new) < 6:
-        return JSONResponse(status_code=400, content={"success": False, "error": "A nova senha precisa ter pelo menos 6 caracteres."})
-    if new == CONFIG["admin_password"]:
+    if len(new) < 8:
+        return JSONResponse(status_code=400, content={"success": False, "error": "A nova senha precisa ter pelo menos 8 caracteres."})
+    if new == req.current_password.strip():
         return JSONResponse(status_code=400, content={"success": False, "error": "A nova senha é igual à atual."})
 
-    old = CONFIG["admin_password"]
-    CONFIG["admin_password"] = new
-    if not await asyncio.to_thread(save_config, CONFIG):
-        CONFIG["admin_password"] = old
-        return JSONResponse(status_code=500, content={"success": False, "error": "Não foi possível gravar a configuração."})
+    await asyncio.to_thread(database.set_user_password, user["id"], new, False)
     login_limiter.reset(ip)
-    print("[GESTORLAB] Senha do painel alterada; sessões anteriores foram encerradas.")
-    # Painéis já abertos foram autorizados com a senha antiga: força a reconexão (quem não
-    # tiver o token novo cai na tela de login).
-    for ws in list(dashboard_websockets):
-        try:
-            await ws.close(code=4005, reason="Senha alterada")
-        except Exception:
-            pass
-    # A senha faz parte da assinatura dos tokens: os antigos (outros navegadores) deixam de valer.
-    return {"success": True, "token": auth.create_access_token(remember=True)}
+    audit(user, "trocou a própria senha")
+    await kick_user(user["id"], "Senha alterada")   # painéis abertos reconectam com o token novo
+    fresh = await asyncio.to_thread(database.get_user_auth, user["id"])
+    return {"success": True, "token": auth.create_access_token(fresh, remember=True), "user": auth.public_user(fresh)}
+
+
+# ---- gestão da equipe (somente administradores) ----
+@app.get("/api/users", dependencies=[Depends(auth.require_admin)])
+async def list_users_api():
+    return {"success": True, "users": await asyncio.to_thread(database.list_users)}
+
+
+@app.post("/api/users")
+async def create_user_api(req: UserCreateRequest, admin: dict = Depends(auth.require_admin)):
+    ok, res = await asyncio.to_thread(database.create_user, req.email, req.name, req.role)
+    if not ok:
+        return JSONResponse(status_code=400, content={"success": False, "error": res})
+    audit(admin, "criou conta", f"{res['email']} ({res['role']})")
+    return {"success": True, "user": res}
+
+
+@app.put("/api/users/{user_id}")
+async def update_user_api(user_id: int, req: UserUpdateRequest, admin: dict = Depends(auth.require_admin)):
+    ok, res = await asyncio.to_thread(database.update_user, user_id, req.name, req.role, req.active)
+    if not ok:
+        return JSONResponse(status_code=400, content={"success": False, "error": res})
+    if not req.active:
+        await kick_user(user_id, "Conta desativada")
+    audit(admin, "alterou conta", f"id {user_id}: {req.role}, {'ativa' if req.active else 'desativada'}")
+    return {"success": True, "message": res}
+
+
+@app.post("/api/users/{user_id}/reset-password")
+async def reset_user_password_api(user_id: int, admin: dict = Depends(auth.require_admin)):
+    temp = await asyncio.to_thread(database.reset_user_password, user_id)
+    if not temp:
+        return JSONResponse(status_code=404, content={"success": False, "error": "Usuário não encontrado."})
+    await kick_user(user_id, "Senha redefinida")
+    audit(admin, "redefiniu senha", f"id {user_id}")
+    return {"success": True, "temp_password": temp}
+
+
+@app.delete("/api/users/{user_id}")
+async def delete_user_api(user_id: int, admin: dict = Depends(auth.require_admin)):
+    if user_id == admin["id"]:
+        return JSONResponse(status_code=400, content={"success": False, "error": "Você não pode excluir a própria conta."})
+    ok, res = await asyncio.to_thread(database.delete_user, user_id)
+    if not ok:
+        return JSONResponse(status_code=400, content={"success": False, "error": res})
+    await kick_user(user_id, "Conta removida")
+    audit(admin, "excluiu conta", f"id {user_id}")
+    return {"success": True, "message": res}
+
+
+@app.get("/api/audit", dependencies=[Depends(auth.require_admin)])
+async def audit_api():
+    return {"success": True, "records": await asyncio.to_thread(database.list_audit)}
 
 
 # ==========================================
@@ -355,30 +440,37 @@ async def get_students_api(q: Optional[str] = None):
     return {"success": True, "students": await asyncio.to_thread(database.list_students, q)}
 
 
-@app.post("/api/students", dependencies=[Depends(auth.require_auth)])
-async def create_student_api(req: StudentCreateRequest):
+@app.post("/api/students")
+async def create_student_api(req: StudentCreateRequest, user: dict = Depends(auth.require_auth)):
     ok, res = await asyncio.to_thread(database.create_student, req.name, req.matricula, req.turma, req.password)
+    if ok:
+        audit(user, "cadastrou aluno", req.matricula)
     return _db_result(ok, res, "student")
 
 
-@app.put("/api/students/{student_id}", dependencies=[Depends(auth.require_auth)])
-async def update_student_api(student_id: int, req: StudentUpdateRequest):
+@app.put("/api/students/{student_id}")
+async def update_student_api(student_id: int, req: StudentUpdateRequest, user: dict = Depends(auth.require_auth)):
     ok, res = await asyncio.to_thread(
         database.update_student, student_id, req.name, req.turma, req.matricula, req.password)
+    if ok:
+        audit(user, "editou aluno", f"id {student_id}" + (" (nova senha)" if req.password else ""))
     return _db_result(ok, res, "message")
 
 
-@app.delete("/api/students/{student_id}", dependencies=[Depends(auth.require_auth)])
-async def delete_student_api(student_id: int):
+@app.delete("/api/students/{student_id}")
+async def delete_student_api(student_id: int, user: dict = Depends(auth.require_admin)):
     ok, res = await asyncio.to_thread(database.delete_student, student_id)
+    if ok:
+        audit(user, "excluiu aluno", f"id {student_id}")
     return _db_result(ok, res, "message")
 
 
 MAX_IMPORT_BYTES = 5 * 1024 * 1024
 
 
-@app.post("/api/students/import", dependencies=[Depends(auth.require_auth)])
-async def import_students_api(file: UploadFile = File(...), update_existing: bool = Form(False)):
+@app.post("/api/students/import")
+async def import_students_api(file: UploadFile = File(...), update_existing: bool = Form(False),
+                              user: dict = Depends(auth.require_admin)):
     raw = await file.read(MAX_IMPORT_BYTES + 1)
     if len(raw) > MAX_IMPORT_BYTES:
         return JSONResponse(status_code=413, content={"success": False, "error": "Planilha maior que 5 MB."})
@@ -386,6 +478,7 @@ async def import_students_api(file: UploadFile = File(...), update_existing: boo
     if error:
         return JSONResponse(status_code=400, content={"success": False, "error": error})
     result = await asyncio.to_thread(database.import_students, rows, update_existing)
+    audit(user, "importou alunos", f"{result['created']} novos, {result['updated']} atualizados")
     return {"success": True, **result}
 
 
@@ -415,9 +508,11 @@ async def export_students_csv():
                         "alunos.csv")
 
 
-@app.post("/api/students/bulk-delete", dependencies=[Depends(auth.require_auth)])
-async def bulk_delete_students_api(req: StudentBulkDeleteRequest):
+@app.post("/api/students/bulk-delete")
+async def bulk_delete_students_api(req: StudentBulkDeleteRequest, user: dict = Depends(auth.require_admin)):
     ok, res = await asyncio.to_thread(database.bulk_delete_students, req.ids)
+    if ok:
+        audit(user, "excluiu alunos", f"{len(req.ids)} selecionados")
     return _db_result(ok, res, "message")
 
 
@@ -502,8 +597,8 @@ async def get_rules():
     return {"success": True, "enabled": payload["enabled"], "programs": payload["programs"], "sites": payload["sites"]}
 
 
-@app.put("/api/rules", dependencies=[Depends(auth.require_auth)])
-async def update_rules(req: RulesRequest):
+@app.put("/api/rules")
+async def update_rules(req: RulesRequest, user: dict = Depends(auth.require_admin)):
     previous = {k: CONFIG.get(k) for k in ("rules_enabled", "blocked_programs", "blocked_sites")}
     CONFIG["rules_enabled"] = req.enabled
     CONFIG["blocked_programs"] = _clean_programs(req.programs)
@@ -512,6 +607,8 @@ async def update_rules(req: RulesRequest):
         CONFIG.update(previous)
         return JSONResponse(status_code=500, content={"success": False, "error": "Não foi possível gravar a configuração."})
     payload = rules_payload()
+    audit(user, "alterou regras", f"{'ativas' if req.enabled else 'desativadas'}; "
+                                  f"{len(payload['programs'])} programas, {len(payload['sites'])} sites")
     text = json.dumps(payload)
     clients = list(connected_clients.values())
     sent = await asyncio.gather(*(_send(c["ws"], text, 5.0) for c in clients)) if clients else []
@@ -527,8 +624,9 @@ async def events_api():
 # ==========================================
 # Envio de arquivos
 # ==========================================
-@app.post("/api/file-transfer", dependencies=[Depends(auth.require_auth)])
-async def api_file_transfer(file: UploadFile = File(...), target: str = Form("all")):
+@app.post("/api/file-transfer")
+async def api_file_transfer(file: UploadFile = File(...), target: str = Form("all"),
+                            user: dict = Depends(auth.require_auth)):
     file_bytes = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(file_bytes) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail=f"Arquivo maior que o limite de {CONFIG['max_upload_mb']} MB.")
@@ -546,6 +644,7 @@ async def api_file_transfer(file: UploadFile = File(...), target: str = Form("al
         raise HTTPException(status_code=404, detail="Nenhum computador conectado para este destino.")
 
     results = await asyncio.gather(*(_send(c["ws"], payload, 30.0) for c in targets))
+    audit(user, "enviou arquivo", f"{filename} -> {target} ({sum(results)} PCs)")
     return {"success": True, "filename": filename, "sent_count": sum(results)}
 
 
@@ -555,12 +654,14 @@ async def api_file_transfer(file: UploadFile = File(...), target: str = Form("al
 @app.websocket("/ws/dashboard")
 async def websocket_dashboard(websocket: WebSocket, token: Optional[str] = Query(None)):
     await websocket.accept()
-    if not auth.verify_token(token):
+    user = await asyncio.to_thread(auth.verify_token, token)
+    if not user or user["must_change"]:
         await websocket.close(code=4001, reason="Não autorizado")
         return
 
     first_dashboard = not dashboard_websockets
     dashboard_websockets.add(websocket)
+    dashboard_users[websocket] = user["id"]
     if first_dashboard:
         await command_all_clients("stream_resume")   # alguém está olhando: agentes voltam a enviar telas
     ips = get_local_ips()
@@ -580,13 +681,14 @@ async def websocket_dashboard(websocket: WebSocket, token: Optional[str] = Query
                 continue
             if not isinstance(data, dict) or data.get("action") not in ALLOWED_ACTIONS:
                 continue
-            await dispatch_command(data)
+            await dispatch_command(data, user)
     except WebSocketDisconnect:
         pass
     except Exception as e:
         print(f"[GESTORLAB] Erro no painel: {e}")
     finally:
         dashboard_websockets.discard(websocket)
+        dashboard_users.pop(websocket, None)
         dashboard_busy.discard(websocket)
         if not dashboard_websockets:
             # Ninguém olhando: volta à qualidade padrão e pausa o envio de telas (poupa a rede).
@@ -594,7 +696,37 @@ async def websocket_dashboard(websocket: WebSocket, token: Optional[str] = Query
             await command_all_clients("stream_pause")
 
 
-async def dispatch_command(data: dict) -> None:
+AUDITED_ACTIONS = {
+    "lock": "bloqueou", "unlock": "desbloqueou", "message": "enviou aviso", "open_url": "abriu site",
+    "power": "energia", "student_logout": "desconectou aluno", "bypass_student_login": "liberou sem login",
+}
+_last_remote_audit: Dict[Any, float] = {}
+
+
+def _audit_command(user: dict, action: str, data: dict) -> None:
+    target = str(data.get("target"))
+    if action == "remote_input":
+        # Controle remoto gera centenas de eventos: registra só o início (1 vez a cada 5 minutos por PC).
+        key = (user["id"], target)
+        if data.get("event") in ("mouse_down", "key_down") and time.time() - _last_remote_audit.get(key, 0) > 300:
+            _last_remote_audit[key] = time.time()
+            audit(user, "controle remoto", target)
+        return
+    if action not in AUDITED_ACTIONS:
+        return
+    detail = target
+    if action == "message":
+        detail += f": {str(data.get('content', ''))[:100]}"
+    elif action == "open_url":
+        detail += f": {data.get('url', '')}"
+    elif action == "power":
+        detail += f": {data.get('mode', '')}"
+    elif action == "lock" and data.get("duration"):
+        detail += f": {data['duration']}s"
+    audit(user, AUDITED_ACTIONS[action], detail[:300])
+
+
+async def dispatch_command(data: dict, user: dict) -> None:
     action = data["action"]
     target = data.get("target")
     if action == "open_url":
@@ -613,6 +745,7 @@ async def dispatch_command(data: dict) -> None:
     targets = resolve_targets(target)
     if not targets:
         return
+    _audit_command(user, action, data)
 
     text = json.dumps(data)
     results = await asyncio.gather(*(_send(c["ws"], text, 5.0) for c in targets))
