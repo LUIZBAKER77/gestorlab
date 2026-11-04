@@ -31,6 +31,10 @@ A configuração fica em `dados\config.json` (`"server_host": "auto"` procura o 
 
 O mesmo vale para `GestorLab Aluno.exe`. Se o programa fechar sozinho, o .exe o reinicia em segundos.
 
+**Disco de rede:** o Windows mostra a caixa "Abrir arquivo – Aviso de segurança" sempre que um programa roda direto de um disco de rede, inclusive no início automático. Por isso, quando o `.exe` é aberto de um disco de rede (`\\servidor\pasta` ou unidade mapeada), ele **se copia para o disco do PC** (`C:\GestorLab` para o aluno, `C:\GestorLabProfessor` para o professor) e passa a iniciar de lá, sem pedir permissão. A pasta `dados` do PC nunca é sobrescrita. Para pular essa cópia: `--sem-copia`.
+
+Para instalar em **vários PCs sem nenhuma pergunta**, use `2_ALUNO\instalar_aluno_todos_os_pcs.bat`: "Executar como administrador" em cada PC, ou como script de **inicialização do computador** na GPO. Ele copia para `C:\GestorLab` e liga o início automático para todos os usuários (rodar de novo atualiza).
+
 ## 🔧 Configuração do servidor (`1_PROFESSOR\dados\server_config.json`)
 
 | Campo | Para que serve |

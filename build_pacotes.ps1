@@ -65,6 +65,7 @@ $alu = New-Package "2_ALUNO" "GestorLab Aluno.exe" "ALUNO" "client\icon.ico" "re
 New-Item -ItemType Directory -Force "$alu\dados" | Out-Null
 if (-not (Test-Path "$alu\dados\config.json")) { Copy-Item (Join-Path $root "client\config.json") "$alu\dados\config.json" }
 Copy-Item (Join-Path $root "congelamento") "$alu\congelamento" -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $root "instalar_aluno_todos_os_pcs.bat") $alu -Force
 
 Write-Host "`nPronto!" -ForegroundColor Green
 Write-Host "  $prof\GestorLab Professor.exe"

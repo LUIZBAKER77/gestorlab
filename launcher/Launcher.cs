@@ -15,10 +15,12 @@ static class Launcher
     const string Role = "Professor";
     const string RunValue = "GestorLabProfessor";
     const string Script = "main.py";
+    const string LocalFolder = @"C:\GestorLabProfessor";
 #else
     const string Role = "Aluno";
     const string RunValue = "GestorLabAgent";
     const string Script = "agent.py";
+    const string LocalFolder = @"C:\GestorLab";
 #endif
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
@@ -49,6 +51,37 @@ static class Launcher
         }
 
         bool autostart = Has(args, "--autostart");
+
+        // Rodando de um disco de rede: o Windows pede permissão ("Aviso de segurança") a cada início
+        // automático e o programa depende da rede estar pronta. Instala uma cópia no disco do PC e
+        // continua de lá; o início automático passa a apontar para a cópia local.
+        if (IsNetworkPath(baseDir) && !Has(args, "--sem-copia"))
+        {
+            Mutex running;
+            if (Mutex.TryOpenExisting("Global\\GestorLab_" + Role, out running))
+            {
+                running.Dispose();   // a cópia local já está rodando: não mexe nos arquivos em uso
+#if PROFESSOR
+                OpenBrowser();
+#endif
+                return 0;
+            }
+            string localExe = InstallLocally(baseDir, Path.GetFileName(self), autostart);
+            if (localExe != null)
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo(localExe, string.Join(" ", args))
+                    {
+                        UseShellExecute = false,
+                        WorkingDirectory = Path.GetDirectoryName(localExe),
+                    });
+                    return 0;
+                }
+                catch (Exception ex) { Log("Falha ao iniciar a cópia local: " + ex.Message); }
+            }
+            // Cópia impossível (sem permissão, disco cheio...): segue rodando pela rede mesmo.
+        }
 
         bool createdNew;
         using (var mutex = new Mutex(true, "Global\\GestorLab_" + Role, out createdNew))
@@ -108,6 +141,57 @@ static class Launcher
                 quickFailures = (DateTime.Now - started).TotalSeconds < 10 ? quickFailures + 1 : 0;
                 Thread.Sleep(quickFailures >= 5 ? 30000 : 3000);
             }
+        }
+    }
+
+    static bool IsNetworkPath(string dir)
+    {
+        if (dir.StartsWith("\\\\")) return true;   // \\servidor\pasta
+        try { return new DriveInfo(Path.GetPathRoot(dir)).DriveType == DriveType.Network; }   // Z:\ mapeado
+        catch { return false; }
+    }
+
+    static int RunHidden(string file, string arguments)
+    {
+        var psi = new ProcessStartInfo(file, arguments) { UseShellExecute = false, CreateNoWindow = true };
+        using (Process p = Process.Start(psi))
+        {
+            p.WaitForExit();
+            return p.ExitCode;
+        }
+    }
+
+    // Copia o programa para o disco local (a pasta "dados" local nunca é sobrescrita) e devolve o .exe de lá.
+    static string InstallLocally(string src, string exeName, bool silent)
+    {
+        try
+        {
+            string dst = LocalFolder;
+            Directory.CreateDirectory(dst);
+            // Todos os usuários do PC precisam poder gravar logs e configurações (S-1-5-32-545 = "Usuários").
+            try { RunHidden("icacls", "\"" + dst + "\" /grant *S-1-5-32-545:(OI)(CI)M /C /Q"); } catch { }
+
+            // robocopy: códigos 0 a 7 = sucesso.
+            if (RunHidden("robocopy", "\"" + src + "\" \"" + dst + "\" /E /XD dados /R:2 /W:2 /NFL /NDL /NJH /NJS /NP") >= 8)
+            {
+                Log("robocopy falhou ao copiar para " + dst);
+                return null;
+            }
+            string srcData = Path.Combine(src, "dados"), dstData = Path.Combine(dst, "dados");
+            if (Directory.Exists(srcData) && !Directory.Exists(dstData))
+                RunHidden("robocopy", "\"" + srcData + "\" \"" + dstData + "\" /E /R:2 /W:2 /NFL /NDL /NJH /NJS /NP");
+
+            string localExe = Path.Combine(dst, exeName);
+            if (!File.Exists(localExe)) return null;
+            if (!silent)
+                MessageBox.Show("O GestorLab foi instalado em " + dst + "\nIniciará sozinho com o Windows, sem pedir permissão.\n" +
+                                "Você já pode fechar a pasta de rede.", "GestorLab", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return localExe;
+        }
+        catch (Exception ex)
+        {
+            Log("Instalação local: " + ex.Message);
+            return null;
         }
     }
 
