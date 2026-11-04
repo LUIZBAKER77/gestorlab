@@ -7,6 +7,12 @@ dados/
 server_config.json
 alunos_importados.csv
 *.csv
+*.xlsx
+*.pdf
+SENHA_INICIAL.txt
+*.tmp
+*.bak
+*.zip
 
 # Pacotes gerados (build_pacotes.ps1 recria) e Python embutido
 1_PROFESSOR/
