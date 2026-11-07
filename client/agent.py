@@ -1283,10 +1283,10 @@ async def run_client():
     configured_host = CONFIG.get("server_host", "auto")
     configured_port = CONFIG.get("server_port", 8000)
 
-    print(f"\n=======================================================")
+    print("\n=======================================================")
     print(f"  [GESTORLAB AGENT] Computador: {HOSTNAME} ({USERNAME})")
     print(f"  Modo de Conexao: '{configured_host}' (Porta: {configured_port})")
-    print(f"=======================================================\n")
+    print("=======================================================\n")
 
     load_saved_rules()
     threading.Thread(target=rules_worker, daemon=True).start()
@@ -1345,8 +1345,8 @@ async def run_client():
                 }
                 await ws.send(json.dumps(register_payload))
                 
-                ack_raw = await ws.recv()
-                print(f"[Conectado e registrado com sucesso no painel do professor!]")
+                await ws.recv()   # confirmação do registro
+                print("[Conectado e registrado com sucesso no painel do professor!]")
                 failures = 0
 
                 cmd_task = asyncio.create_task(handle_commands(ws))

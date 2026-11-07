@@ -178,7 +178,7 @@ function showLoginScreen(errorMsg = null) {
   }
 
   loginPasswordInput.value = "";
-  loginPasswordInput.focus();
+  (loginEmailInput.value ? loginPasswordInput : loginEmailInput).focus();
 }
 
 function showAppScreen() {
