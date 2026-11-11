@@ -15,6 +15,7 @@ setlocal
 set "ORIGEM=%~dp0"
 set "DESTINO=C:\GestorLab"
 set "EXE=GestorLab Aluno.exe"
+set "VBS=GestorLab Aluno.vbs"
 
 if not exist "%ORIGEM%%EXE%" (
     echo Nao encontrei "%EXE%" ao lado deste script. Rode-o de dentro da pasta 2_ALUNO.
@@ -42,12 +43,13 @@ if not exist "%DESTINO%\dados" (
 )
 
 rem Inicio automatico para todos os usuarios (chave do computador, nao do usuario).
-reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v GestorLabAgent /t REG_SZ /d "\"%DESTINO%\%EXE%\" --autostart" /f >nul
+rem Inicia pelo pythonw.exe (Python oficial, reconhecido pelo antivirus) via .vbs.
+reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v GestorLabAgent /t REG_SZ /d "wscript.exe \"%DESTINO%\%VBS%\"" /f >nul
 if errorlevel 1 (
     echo Nao consegui registrar o inicio automatico. Execute como Administrador.
     exit /b 1
 )
 
 echo GestorLab instalado em %DESTINO% e configurado para iniciar com o Windows.
-echo Ele passa a funcionar no proximo login (ou de duplo clique em "%DESTINO%\%EXE%").
+echo Ele passa a funcionar no proximo login (ou de duplo clique em "%DESTINO%\%VBS%").
 exit /b 0
