@@ -52,11 +52,7 @@ Banco de alunos: `dados\gestorlab.db`. Logs: `dados\servidor.log`, `dados\agente
 
 ## 🛡️ Antivírus (SentinelOne)
 
-O agente do aluno faz coisas que antivírus podem classificar como suspeitas (bloqueio de teclado, controle remoto, captura de tela, início automático). Sem liberação da TI não há garantia.
-
-**Iniciar pelo Python (recomendado):** o `GestorLab Aluno.vbs` inicia o agente pelo `pythonw.exe` (o Python oficial, assinado), em vez do `GestorLab Aluno.exe`. Como o antivírus reconhece o `pythonw.exe`, costuma barrar menos que um `.exe` próprio e desconhecido. O `instalar_aluno_todos_os_pcs.bat` já registra o início automático por esse caminho (`wscript.exe "...\GestorLab Aluno.vbs"`). A instância única e o reinício em caso de falha, antes feitos pelo `.exe`, agora estão no próprio `agent.py`. O `.exe` continua no pacote como alternativa.
-
-Isso reduz detecções por reputação, mas **não é garantia**: se o antivírus barrar pelo comportamento (keylogger, etc.), peça à TI para liberar a pasta do GestorLab. Veja o pedido pronto em `PEDIDO_LIBERACAO_SENTINELONE.txt`. A solução definitiva é assinar os executáveis com um certificado de código.
+Não há PyInstaller: o .exe é um lançador pequeno que roda o Python oficial embutido. Mesmo assim, o agente do aluno faz coisas que antivírus podem classificar como suspeitas (bloqueio de teclado, controle remoto, captura de tela, início automático). Sem liberação da TI não há garantia. Se bloquear, peça à TI para liberar a pasta do GestorLab (ou o certificado, se o executável for assinado no futuro).
 
 ## 🛠️ Para desenvolvedores
 

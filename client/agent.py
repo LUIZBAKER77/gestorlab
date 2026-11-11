@@ -150,33 +150,15 @@ def set_task_manager_disabled(disabled: bool):
         pass
 
 def ensure_startup_persistence():
-    """Registra o início com o Windows. Prefere o .vbs (roda o pythonw.exe, reconhecido
-    pelo antivírus); mantém o lançador .exe antigo quando for esse quem iniciou o agente."""
-    if os.path.exists(os.path.join(DATA_DIR, "inicio_manual.txt")):
-        return
-    vbs = os.environ.get("GESTORLAB_VBS")
+    """Garante o início com o Windows apontando para o lançador (.exe) que iniciou o agente."""
     launcher = os.environ.get("GESTORLAB_LAUNCHER")
-    if vbs and os.path.exists(vbs):
-        command = f'wscript.exe "{vbs}"'
-    elif launcher:
-        command = f'"{launcher}" --autostart'
-    else:
+    if not launcher or os.path.exists(os.path.join(DATA_DIR, "inicio_manual.txt")):
         return
     try:
         key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
-        winreg.SetValueEx(key, "GestorLabAgent", 0, winreg.REG_SZ, command)
+        winreg.SetValueEx(key, "GestorLabAgent", 0, winreg.REG_SZ, f'"{launcher}" --autostart')
         winreg.CloseKey(key)
-    except Exception:
-        pass
-
-
-def ensure_single_instance():
-    """Impede duas cópias do agente ao mesmo tempo (antes era o .exe que garantia isto)."""
-    try:
-        kernel32.CreateMutexW(None, False, "Global\\GestorLab_Aluno")
-        if kernel32.GetLastError() == 183:   # ERROR_ALREADY_EXISTS
-            sys.exit(0)
     except Exception:
         pass
 
@@ -1398,15 +1380,7 @@ def windows_name() -> str:
         return "Windows"
 
 if __name__ == "__main__":
-    ensure_single_instance()
-    # Supervisor: se o agente travar por um erro inesperado, reinicia (antes era o .exe
-    # que reiniciava o processo). run_client() normalmente nunca retorna.
-    while True:
-        try:
-            asyncio.run(run_client())
-        except KeyboardInterrupt:
-            print("\nAgente encerrado.")
-            break
-        except Exception as e:
-            print(f"[Agente reiniciando após falha]: {e}")
-            time.sleep(5)
+    try:
+        asyncio.run(run_client())
+    except KeyboardInterrupt:
+        print("\nAgente encerrado.")
