@@ -37,7 +37,10 @@ if sys.stdout is None or sys.stderr is None:
 DEFAULT_PASSWORD = "padrao#jf"
 
 _DEFAULTS = {
-    "admin_password": DEFAULT_PASSWORD,
+    # Na nuvem (servidor exposto na internet), defina GESTORLAB_ADMIN_PASSWORD
+    # para a senha inicial do admin NAO ser a padrao publica. Só vale na primeira
+    # execução; depois a senha fica no server_config.json / banco.
+    "admin_password": os.environ.get("GESTORLAB_ADMIN_PASSWORD") or DEFAULT_PASSWORD,
     "secret_key": "",          # gerada automaticamente na primeira execução
     "agent_key": "",           # opcional: se preenchida, os agentes precisam apresentá-la
     "port": 8000,

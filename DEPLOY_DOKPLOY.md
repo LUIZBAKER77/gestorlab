@@ -36,9 +36,12 @@ perdido a cada redeploy.
 ## 4. Primeiro acesso / migrar seus dados
 
 **Opção A — começar do zero (sistema novo, sem alunos):**
-- Acesse o domínio e entre com a conta provisória `admin` e a senha padrão
-  (`padrao#jf`). Crie as contas da equipe na aba **Equipe** e **exclua a `admin`**.
-  Depois importe os alunos pela planilha.
+- **Antes do 1º deploy**, defina em **Environment** a variável
+  `GESTORLAB_ADMIN_PASSWORD` com uma senha forte — assim a conta `admin` inicial
+  não usa a padrão pública (`padrao#jf`), que está visível no código-fonte.
+- Acesse o domínio e entre com o usuário `admin` e essa senha. Crie as contas da
+  equipe na aba **Equipe** e **exclua a `admin`**. Depois importe os alunos pela
+  planilha.
 
 **Opção B — levar o banco que você já tem (1790 alunos + suas contas):**
 1. Pegue o `gestorlab.db` atual (do PC/pacote do professor, pasta `dados`).
@@ -83,6 +86,8 @@ Use a **URL completa** — ela já define HTTPS/WSS automaticamente:
   agora só abre o domínio no navegador e faz login. Dá para manter o `.exe` como
   alternativa offline, mas o fluxo normal passa a ser a nuvem.
 - Variáveis já embutidas na imagem: `GESTORLAB_DATA=/data` e `GESTORLAB_BROWSER=0`.
+- Variável recomendada em **Environment**: `GESTORLAB_ADMIN_PASSWORD` (senha
+  inicial do admin; só vale na primeira execução, depois fica no banco).
 - A porta interna é sempre `8000`; quem publica para fora é o Dokploy/Traefik.
 - A descoberta UDP tenta subir dentro do contêiner e, se não conseguir, apenas
   avisa no log e segue — não derruba o servidor.
