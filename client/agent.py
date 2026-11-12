@@ -185,6 +185,7 @@ def load_config():
     default_cfg = {
         "server_host": "auto",
         "server_port": 8000,
+        "secure": False,
         "fps_interval": 0.5,
         "jpeg_quality": 40,
         "scale": 0.4,
@@ -370,6 +371,34 @@ def discover_server(discovery_port=8001, timeout=1.2):
             pass
     return None, None
 
+def resolve_server_url(host, port, kind, path=""):
+    """Monta a URL do servidor (kind='http' ou 'ws') a partir do host/porta do config.
+    server_host pode ser IP, dominio ou URL completa (ex.: https://gestor.escola.com).
+    Na nuvem com HTTPS/WSS, use a URL completa em server_host (ou "secure": true)."""
+    host = str(host or "")
+    secure = bool(CONFIG.get("secure", False))
+    explicit_port = port
+    if "://" in host:
+        try:
+            from urllib.parse import urlparse
+            u = urlparse(host)
+            secure = u.scheme in ("https", "wss")
+            host = u.hostname or host
+            explicit_port = u.port
+        except Exception:
+            pass
+    if kind == "ws":
+        scheme = "wss" if secure else "ws"
+    else:
+        scheme = "https" if secure else "http"
+    default_port = 443 if secure else 80
+    if explicit_port and int(explicit_port) != default_port:
+        netloc = f"{host}:{explicit_port}"
+    else:
+        netloc = host
+    return f"{scheme}://{netloc}{path}"
+
+
 def verify_student_with_server(matricula: str, password: str):
     host = ACTIVE_SERVER.get("ip")
     port = ACTIVE_SERVER.get("port", 8000)
@@ -387,7 +416,7 @@ def verify_student_with_server(matricula: str, password: str):
     if not host:
         host = "127.0.0.1"
 
-    url = f"http://{host}:{port}/api/student/verify-login"
+    url = resolve_server_url(host, port, "http", "/api/student/verify-login")
     payload = json.dumps({"matricula": matricula, "password": password}).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json", "X-Agent-Key": CONFIG.get("agent_key", "")})
 
@@ -1324,7 +1353,7 @@ async def run_client():
             ACTIVE_SERVER["ip"] = target_ip
             ACTIVE_SERVER["port"] = target_port
 
-        ws_url = f"ws://{target_ip}:{target_port}/ws/client"
+        ws_url = resolve_server_url(target_ip, target_port, "ws", "/ws/client")
         print(f"Tentando conectar ao professor em: {ws_url}")
 
         try:

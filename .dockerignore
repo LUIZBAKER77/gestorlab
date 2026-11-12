@@ -1,0 +1,26 @@
+# A imagem precisa so de server/ e requirements-professor.txt.
+# Tudo o mais fica de fora (inclusive QUALQUER dado de aluno).
+.git/
+.github/
+1_PROFESSOR/
+2_ALUNO/
+client/
+launcher/
+python_app/
+_antigo/
+congelamento/
+tests/
+Downloads/
+# Dados e segredos: nunca entram na imagem.
+**/dados/
+dados/
+*.db
+*.sqlite
+*.log
+*.rar
+*.zip
+# Documentacao e scripts de build.
+*.md
+build_pacotes.*
+instalar_aluno_todos_os_pcs.bat
+liberar_firewall.bat
