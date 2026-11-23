@@ -48,6 +48,7 @@ _DEFAULTS = {
     "discovery_port": 8001,
     "open_browser": True,
     "max_upload_mb": 40,
+    "tls": False,              # HTTPS/WSS com certificado autoassinado (ligue com GESTORLAB_TLS=1)
     # Regras de uso aplicadas pelos agentes (editáveis na aba "Regras" do painel).
     "rules_enabled": False,
     "blocked_programs": [],   # nomes de executáveis, ex.: "RobloxPlayerBeta.exe"
@@ -82,6 +83,9 @@ def _load() -> dict:
         stripped_key = env_agent_key.strip()
         cfg["agent_key"] = stripped_key
         print(f"[GESTORLAB] GESTORLAB_AGENT_KEY detectada ({len(stripped_key)} caracteres).")
+    env_tls = os.environ.get("GESTORLAB_TLS")
+    if env_tls is not None:
+        cfg["tls"] = env_tls.strip().lower() in ("1", "true", "sim", "on", "yes")
 
     if not cfg.get("secret_key"):
         cfg["secret_key"] = secrets.token_hex(32)

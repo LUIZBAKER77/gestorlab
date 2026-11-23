@@ -80,6 +80,39 @@ Use a **URL completa** — ela já define HTTPS/WSS automaticamente:
 - Para rede local sem HTTPS (teste), dá para usar `"server_host": "192.168.x.x"`
   com `"server_port": 8000` — o modo antigo continua funcionando.
 
+## Criptografia (TLS) com certificado próprio — RECOMENDADO
+
+Sem isso, tudo trafega em texto puro (senhas, token, telas) e **qualquer PC da rede
+pode se passar pelo servidor e controlar as máquinas**. Com TLS ligado, o tráfego é
+criptografado e o agente só obedece o servidor que apresentar o certificado certo
+(um invasor é recusado). Funciona mesmo com IP interno, sem domínio.
+
+A chave privada é gerada **dentro do servidor** e nunca sai dele. Você só copia uma
+linha (a impressão digital) do log para o agente. Passo a passo:
+
+1. No Dokploy, aba **Environment**, adicione:
+   ```
+   GESTORLAB_TLS=1
+   ```
+   Salve e dê **Deploy**.
+2. Abra a aba **Logs**. Logo no início vai aparecer um bloco assim:
+   ```
+   [GESTORLAB] TLS LIGADO (certificado autoassinado)
+   ... "server_cert_sha256":
+   4939609616887ff8...  (64 caracteres hex)
+   ```
+   Copie essa linha de 64 caracteres (a impressão digital).
+3. Me mande essa impressão digital: eu coloco no `config.json` dos agentes
+   (campos `"secure": true` e `"server_cert_sha256": "..."`), gero o pacote e você
+   redistribui. A partir daí o acesso ao servidor passa a ser `https://10.11.1.41:8127`.
+4. No navegador, ao abrir o painel em `https://...`, vai aparecer um aviso de
+   "certificado não confiável" (porque é autoassinado) — é esperado; clique em
+   avançar/continuar. Para os **agentes** não tem aviso: eles verificam pela
+   impressão digital fixada.
+
+Enquanto o TLS não estiver ligado, mantenha o uso só na rede interna e ciente de
+que o tráfego não é criptografado.
+
 ## Observações
 
 - O pacote **1_PROFESSOR** (servidor `.exe` local) deixa de ser necessário: o TE

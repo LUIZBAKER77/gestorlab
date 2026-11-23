@@ -29,6 +29,10 @@ from ctypes import wintypes
 import winreg
 import urllib.request
 import urllib.parse
+import urllib.error
+import http.client
+import ssl
+import hmac
 
 # Habilitar DPI Awareness para precisão milimétrica de cliques no Windows
 user32 = ctypes.windll.user32
@@ -186,6 +190,7 @@ def load_config():
         "server_host": "auto",
         "server_port": 8000,
         "secure": False,
+        "server_cert_sha256": "",   # impressão digital do cert do servidor (modo seguro)
         "fps_interval": 0.5,
         "jpeg_quality": 40,
         "scale": 0.4,
@@ -399,6 +404,58 @@ def resolve_server_url(host, port, kind, path=""):
     return f"{scheme}://{netloc}{path}"
 
 
+def is_secure() -> bool:
+    """True quando o servidor é acessado por HTTPS/WSS (nuvem/cert próprio)."""
+    h = str(CONFIG.get("server_host", "")).lower()
+    return h.startswith(("https://", "wss://")) or bool(CONFIG.get("secure", False))
+
+
+def _server_pin() -> str:
+    return str(CONFIG.get("server_cert_sha256", "")).strip().lower().replace(":", "")
+
+
+def pinned_ssl_context() -> ssl.SSLContext:
+    """Contexto TLS que não confia em nenhuma autoridade: a identidade do servidor é
+    verificada por nós, comparando a impressão digital SHA-256 do certificado com
+    server_cert_sha256 (pinning). Isso autentica o servidor para o agente — um PC
+    invasor, sem este certificado, é recusado."""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+def verify_cert_pin(der_cert) -> None:
+    """Confere a impressão digital do certificado apresentado. Lança se não bater
+    (ou se o agente estiver em modo seguro sem pin configurado)."""
+    pin = _server_pin()
+    if not pin:
+        raise ssl.SSLError("modo seguro ligado, mas 'server_cert_sha256' não está "
+                           "configurado no agente — recusando conexão sem verificação.")
+    if not der_cert:
+        raise ssl.SSLError("servidor não apresentou certificado.")
+    got = hashlib.sha256(der_cert).hexdigest().lower()
+    if not hmac.compare_digest(got, pin):
+        raise ssl.SSLError("certificado do servidor não confere com o fixado "
+                           "(server_cert_sha256) — possível servidor falso. Conexão recusada.")
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPSConnection que, após o handshake, verifica a impressão digital fixada."""
+    def connect(self):
+        super().connect()
+        verify_cert_pin(self.sock.getpeercert(binary_form=True))
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_PinnedHTTPSConnection, req, context=pinned_ssl_context())
+
+
+def _pinned_opener():
+    return urllib.request.build_opener(_PinnedHTTPSHandler())
+
+
 def verify_student_with_server(matricula: str, password: str):
     host = ACTIVE_SERVER.get("ip")
     port = ACTIVE_SERVER.get("port", 8000)
@@ -419,9 +476,11 @@ def verify_student_with_server(matricula: str, password: str):
     url = resolve_server_url(host, port, "http", "/api/student/verify-login")
     payload = json.dumps({"matricula": matricula, "password": password}).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json", "X-Agent-Key": CONFIG.get("agent_key", "")})
+    # Em modo seguro, o certificado do servidor é verificado por pinning (recusa servidor falso).
+    opener = _pinned_opener().open if is_secure() else urllib.request.urlopen
 
     try:
-        with urllib.request.urlopen(req, timeout=3.5) as resp:
+        with opener(req, timeout=3.5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             if data.get("success"):
                 return True, data.get("student")
@@ -1356,8 +1415,16 @@ async def run_client():
         ws_url = resolve_server_url(target_ip, target_port, "ws", "/ws/client")
         print(f"Tentando conectar ao professor em: {ws_url}")
 
+        ws_secure = ws_url.startswith("wss://")
+        ssl_ctx = pinned_ssl_context() if ws_secure else None
+
         try:
-            async with websockets.connect(ws_url, max_size=64 * 1024 * 1024) as ws:
+            async with websockets.connect(ws_url, max_size=64 * 1024 * 1024, ssl=ssl_ctx) as ws:
+                if ws_secure:
+                    # Autentica o servidor ANTES de enviar qualquer dado (agent_key etc.):
+                    # confere a impressão digital do certificado. Servidor falso é recusado.
+                    sslobj = ws.transport.get_extra_info("ssl_object")
+                    verify_cert_pin(sslobj.getpeercert(binary_form=True) if sslobj else None)
                 CURRENT_WS["ws"] = ws
                 register_payload = {
                     "type": "register",

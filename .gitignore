@@ -4,6 +4,7 @@ dados/
 *.db
 *.db-wal
 *.db-shm
+*.pem
 server_config.json
 alunos_importados.csv
 *.csv

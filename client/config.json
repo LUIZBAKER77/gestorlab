@@ -2,6 +2,7 @@
   "server_host": "10.11.1.41",
   "server_port": 8127,
   "secure": false,
+  "server_cert_sha256": "",
   "agent_key": "",
   "fps_interval": 0.5,
   "jpeg_quality": 40,

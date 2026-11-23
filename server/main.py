@@ -924,15 +924,29 @@ async def index():
 
 
 if __name__ == "__main__":
+    ssl_args = {}
+    scheme = "http"
+    if CONFIG.get("tls"):
+        import tls as _tls
+        cert_path, key_path, fp = _tls.ensure_cert()
+        ssl_args = {"ssl_certfile": cert_path, "ssl_keyfile": key_path}
+        scheme = "https"
+        print("\n=======================================================")
+        print("  [GESTORLAB] TLS LIGADO (certificado autoassinado)")
+        print("  Copie a impressão digital abaixo para o config dos agentes")
+        print("  no campo \"server_cert_sha256\":")
+        print(f"\n  {fp}\n")
+        print("=======================================================")
+
     # O lançador desativa a abertura do navegador quando o início é automático (login do Windows).
     if CONFIG.get("open_browser", True) and os.environ.get("GESTORLAB_BROWSER", "1") == "1":
-        threading.Timer(1.5, lambda: webbrowser.open(f"http://localhost:{PORT}")).start()
+        threading.Timer(1.5, lambda: webbrowser.open(f"{scheme}://localhost:{PORT}")).start()
 
-    ip_list = ", ".join(f"http://{ip}:{PORT}" for ip in get_local_ips())
+    ip_list = ", ".join(f"{scheme}://{ip}:{PORT}" for ip in get_local_ips())
     print("\n=======================================================")
     print("  [GESTORLAB] SERVIDOR DO PROFESSOR EM EXECUÇÃO")
-    print(f"  Acesse no seu navegador: http://localhost:{PORT}")
+    print(f"  Acesse no seu navegador: {scheme}://localhost:{PORT}")
     print(f"  Ou na rede local:        {ip_list}")
     print(f"  Descoberta automática:   UDP porta {DISCOVERY_PORT}")
     print("=======================================================\n")
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    uvicorn.run(app, host="0.0.0.0", port=PORT, **ssl_args)
