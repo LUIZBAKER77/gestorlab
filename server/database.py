@@ -129,18 +129,21 @@ def init_db() -> None:
             print(f"[GESTORLAB DB] Conta inicial criada: usuário 'admin' "
                   f"(senha com {len(str(CONFIG['admin_password']))} caracteres).")
         else:
-            # A conta provisória "admin" (ninguém conseguiu logar e trocar a senha ainda,
-            # must_change=1) é resincronizada com a senha atual a cada início: assim, se a
-            # variável de ambiente GESTORLAB_ADMIN_PASSWORD mudar ou for corrigida depois de
-            # já existir uma conta, basta reiniciar o servidor em vez de apagar o banco.
-            # Uma conta "admin" já usada (must_change=0, a pessoa já trocou a senha) nunca é
-            # tocada aqui.
+            # A conta provisória "admin" que NUNCA conseguiu logar (last_login vazio) é
+            # resincronizada com a senha atual a cada início: assim, se a variável de ambiente
+            # GESTORLAB_ADMIN_PASSWORD mudar ou for corrigida depois de já existir a conta
+            # (ex.: senha cortada por um "#" no primeiro deploy), basta reiniciar o servidor
+            # em vez de apagar o banco. Usar last_login (e não must_change) é o que pega
+            # também a conta criada por versões antigas com must_change=0.
+            # Assim que alguém loga de fato, last_login é preenchido e a conta nunca mais é
+            # tocada aqui — a senha que a pessoa escolher no painel não é atropelada.
             row = conn.execute(
-                "SELECT id FROM users WHERE email = 'admin' AND role = 'admin' AND must_change = 1"
+                "SELECT id FROM users WHERE email = 'admin' AND role = 'admin' AND last_login IS NULL"
             ).fetchone()
             if row:
                 pwd_hash, salt = hash_password(str(CONFIG["admin_password"]))
-                conn.execute("UPDATE users SET password_hash = ?, salt = ? WHERE id = ?", (pwd_hash, salt, row[0]))
+                conn.execute("UPDATE users SET password_hash = ?, salt = ?, must_change = 1 WHERE id = ?",
+                             (pwd_hash, salt, row[0]))
                 print(f"[GESTORLAB DB] Conta 'admin' provisória resincronizada "
                       f"(senha com {len(str(CONFIG['admin_password']))} caracteres).")
 
