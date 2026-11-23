@@ -37,10 +37,11 @@ if sys.stdout is None or sys.stderr is None:
 DEFAULT_PASSWORD = "padrao#jf"
 
 _DEFAULTS = {
-    # Na nuvem (servidor exposto na internet), defina GESTORLAB_ADMIN_PASSWORD
-    # para a senha inicial do admin NAO ser a padrao publica. Só vale na primeira
-    # execução; depois a senha fica no server_config.json / banco.
-    "admin_password": os.environ.get("GESTORLAB_ADMIN_PASSWORD") or DEFAULT_PASSWORD,
+    # Na nuvem (servidor exposto na internet), defina as variáveis de ambiente
+    # GESTORLAB_ADMIN_PASSWORD e GESTORLAB_AGENT_KEY: elas sempre vencem o valor
+    # gravado no arquivo (ver _load), então dá pra trocar a qualquer momento só
+    # reiniciando o servidor, sem editar nada na pasta de dados.
+    "admin_password": DEFAULT_PASSWORD,
     "secret_key": "",          # gerada automaticamente na primeira execução
     "agent_key": "",           # opcional: se preenchida, os agentes precisam apresentá-la
     "port": 8000,
@@ -62,6 +63,16 @@ def _load() -> dict:
                 cfg.update(json.load(f))
         except (OSError, ValueError) as e:
             print(f"[GESTORLAB] server_config.json inválido, usando padrões: {e}")
+
+    # GESTORLAB_ADMIN_PASSWORD e GESTORLAB_AGENT_KEY sempre vencem o valor gravado no
+    # arquivo: sem isso, uma vez salvo em disco (ex.: ao gerar o secret_key), o arquivo
+    # passaria a sobrepor a variável de ambiente em toda inicialização seguinte.
+    env_admin_password = os.environ.get("GESTORLAB_ADMIN_PASSWORD")
+    if env_admin_password:
+        cfg["admin_password"] = env_admin_password
+    env_agent_key = os.environ.get("GESTORLAB_AGENT_KEY")
+    if env_agent_key:
+        cfg["agent_key"] = env_agent_key
 
     if not cfg.get("secret_key"):
         cfg["secret_key"] = secrets.token_hex(32)

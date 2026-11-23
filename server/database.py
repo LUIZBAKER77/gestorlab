@@ -125,6 +125,19 @@ def init_db() -> None:
                 "INSERT INTO users (email, name, password_hash, salt, role, must_change) VALUES (?, ?, ?, ?, 'admin', ?)",
                 ("admin", "Administrador inicial", pwd_hash, salt, 1 if CONFIG["admin_password"] == DEFAULT_PASSWORD else 0))
             print("[GESTORLAB DB] Conta inicial criada: usuário 'admin' (senha do server_config.json).")
+        else:
+            # A conta provisória "admin" (ninguém trocou a senha ainda, must_change=1) é
+            # resincronizada com a senha atual a cada início: assim, se a variável de
+            # ambiente GESTORLAB_ADMIN_PASSWORD mudar depois de já existir uma conta
+            # (ex.: definida só depois do primeiro deploy), basta reiniciar o servidor
+            # em vez de apagar o banco. Uma conta "admin" já usada (must_change=0) nunca
+            # é tocada aqui.
+            row = conn.execute(
+                "SELECT id FROM users WHERE email = 'admin' AND role = 'admin' AND must_change = 1"
+            ).fetchone()
+            if row:
+                pwd_hash, salt = hash_password(str(CONFIG["admin_password"]))
+                conn.execute("UPDATE users SET password_hash = ?, salt = ? WHERE id = ?", (pwd_hash, salt, row[0]))
 
 
 def list_students(query: Optional[str] = None) -> List[Dict[str, Any]]:
