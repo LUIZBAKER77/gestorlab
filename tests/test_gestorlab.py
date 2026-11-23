@@ -196,6 +196,11 @@ class ServerTests(unittest.TestCase):
         main.login_limiter._fails.clear()
         status, data = call("POST", "/api/login", {"email": "admin", "password": "teste123"})
         assert status == 200, data
+        assert data["user"]["must_change"], data  # conta provisória: precisa trocar a senha antes de usar o painel
+        status, data = call("POST", "/api/me/password",
+                             {"current_password": "teste123", "new_password": "senha-definitiva-1"},
+                             data["token"])
+        assert status == 200, data
         cls.token = data["token"]
 
     @classmethod
@@ -310,16 +315,16 @@ class ServerTests(unittest.TestCase):
         url = "/api/me/password"
         main.login_limiter._fails.clear()
         self.assertEqual(call("POST", url, {"current_password": "x", "new_password": "nova12345"}, self.token)[0], 400)
-        self.assertEqual(call("POST", url, {"current_password": "teste123", "new_password": "curta"}, self.token)[0], 400)
-        status, data = call("POST", url, {"current_password": "teste123", "new_password": "nova12345"}, self.token)
+        self.assertEqual(call("POST", url, {"current_password": "senha-definitiva-1", "new_password": "curta"}, self.token)[0], 400)
+        status, data = call("POST", url, {"current_password": "senha-definitiva-1", "new_password": "nova12345"}, self.token)
         self.assertEqual(status, 200)
         new_token = data["token"]
         try:
             self.assertEqual(call("GET", "/api/students", token=self.token)[0], 401)   # token antigo morreu
             self.assertEqual(call("GET", "/api/students", token=new_token)[0], 200)
-            self.assertEqual(call("POST", "/api/login", {"email": "admin", "password": "teste123"})[0], 401)
+            self.assertEqual(call("POST", "/api/login", {"email": "admin", "password": "senha-definitiva-1"})[0], 401)
         finally:
-            status, data = call("POST", url, {"current_password": "nova12345", "new_password": "teste123"}, new_token)
+            status, data = call("POST", url, {"current_password": "nova12345", "new_password": "senha-definitiva-1"}, new_token)
             self.assertEqual(status, 200)
             type(self).token = data["token"]
             main.login_limiter._fails.clear()

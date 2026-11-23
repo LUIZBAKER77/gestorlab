@@ -7,7 +7,7 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from config import CONFIG, DB_PATH, DEFAULT_PASSWORD
+from config import CONFIG, DB_PATH
 
 PBKDF2_ROUNDS = 100_000
 PUBLIC_COLUMNS = "id, matricula, name, turma, created_at"
@@ -120,24 +120,29 @@ def init_db() -> None:
         if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
             # Primeira execução: conta provisória "admin" com a senha do server_config.json.
             # Entre com ela, cadastre a equipe em Equipe e apague esta conta.
+            # must_change sempre começa em 1 (mesmo vindo de senha customizada via env var):
+            # só o próprio login + troca de senha confirma que a senha realmente funciona.
             pwd_hash, salt = hash_password(str(CONFIG["admin_password"]))
             conn.execute(
-                "INSERT INTO users (email, name, password_hash, salt, role, must_change) VALUES (?, ?, ?, ?, 'admin', ?)",
-                ("admin", "Administrador inicial", pwd_hash, salt, 1 if CONFIG["admin_password"] == DEFAULT_PASSWORD else 0))
-            print("[GESTORLAB DB] Conta inicial criada: usuário 'admin' (senha do server_config.json).")
+                "INSERT INTO users (email, name, password_hash, salt, role, must_change) VALUES (?, ?, ?, ?, 'admin', 1)",
+                ("admin", "Administrador inicial", pwd_hash, salt))
+            print(f"[GESTORLAB DB] Conta inicial criada: usuário 'admin' "
+                  f"(senha com {len(str(CONFIG['admin_password']))} caracteres).")
         else:
-            # A conta provisória "admin" (ninguém trocou a senha ainda, must_change=1) é
-            # resincronizada com a senha atual a cada início: assim, se a variável de
-            # ambiente GESTORLAB_ADMIN_PASSWORD mudar depois de já existir uma conta
-            # (ex.: definida só depois do primeiro deploy), basta reiniciar o servidor
-            # em vez de apagar o banco. Uma conta "admin" já usada (must_change=0) nunca
-            # é tocada aqui.
+            # A conta provisória "admin" (ninguém conseguiu logar e trocar a senha ainda,
+            # must_change=1) é resincronizada com a senha atual a cada início: assim, se a
+            # variável de ambiente GESTORLAB_ADMIN_PASSWORD mudar ou for corrigida depois de
+            # já existir uma conta, basta reiniciar o servidor em vez de apagar o banco.
+            # Uma conta "admin" já usada (must_change=0, a pessoa já trocou a senha) nunca é
+            # tocada aqui.
             row = conn.execute(
                 "SELECT id FROM users WHERE email = 'admin' AND role = 'admin' AND must_change = 1"
             ).fetchone()
             if row:
                 pwd_hash, salt = hash_password(str(CONFIG["admin_password"]))
                 conn.execute("UPDATE users SET password_hash = ?, salt = ? WHERE id = ?", (pwd_hash, salt, row[0]))
+                print(f"[GESTORLAB DB] Conta 'admin' provisória resincronizada "
+                      f"(senha com {len(str(CONFIG['admin_password']))} caracteres).")
 
 
 def list_students(query: Optional[str] = None) -> List[Dict[str, Any]]:

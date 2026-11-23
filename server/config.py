@@ -69,10 +69,19 @@ def _load() -> dict:
     # passaria a sobrepor a variável de ambiente em toda inicialização seguinte.
     env_admin_password = os.environ.get("GESTORLAB_ADMIN_PASSWORD")
     if env_admin_password:
-        cfg["admin_password"] = env_admin_password
+        stripped = env_admin_password.strip()
+        if stripped != env_admin_password:
+            print("[GESTORLAB] AVISO: GESTORLAB_ADMIN_PASSWORD tem espaço/quebra de linha "
+                  "no início ou fim; usando o valor sem esses espaços.")
+        cfg["admin_password"] = stripped
+        print(f"[GESTORLAB] GESTORLAB_ADMIN_PASSWORD detectada ({len(stripped)} caracteres).")
+    else:
+        print("[GESTORLAB] GESTORLAB_ADMIN_PASSWORD não definida; usando a senha padrão.")
     env_agent_key = os.environ.get("GESTORLAB_AGENT_KEY")
     if env_agent_key:
-        cfg["agent_key"] = env_agent_key
+        stripped_key = env_agent_key.strip()
+        cfg["agent_key"] = stripped_key
+        print(f"[GESTORLAB] GESTORLAB_AGENT_KEY detectada ({len(stripped_key)} caracteres).")
 
     if not cfg.get("secret_key"):
         cfg["secret_key"] = secrets.token_hex(32)
