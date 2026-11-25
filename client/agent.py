@@ -596,6 +596,7 @@ class UIManager:
         self.root.mainloop()
 
     def _process_events(self):
+        self.ui_heartbeat = time.monotonic()   # usado pelo vigia de travamento
         while True:
             try:
                 fn = self._queue.get_nowait()
@@ -1133,6 +1134,29 @@ class UIManager:
 
 ui_manager = UIManager()
 
+
+def _ui_watchdog():
+    """Diagnóstico: se a interface ficar parada por mais de 5 s ("não está respondendo"),
+    grava no agente.log a pilha de TODAS as threads, mostrando onde travou."""
+    import faulthandler
+    dumped_at = 0.0
+    while True:
+        time.sleep(2)
+        hb = getattr(ui_manager, "ui_heartbeat", None)
+        if hb is None:
+            continue
+        stalled = time.monotonic() - hb
+        if stalled > 5 and time.monotonic() - dumped_at > 60:
+            dumped_at = time.monotonic()
+            print(f"\n[TRAVAMENTO] Interface parada há {stalled:.0f}s. Pilha das threads:", flush=True)
+            try:
+                faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
+            except Exception as e:
+                print(f"[TRAVAMENTO] não consegui gravar a pilha: {e}")
+
+
+threading.Thread(target=_ui_watchdog, daemon=True).start()
+
 # ==========================================
 # Captura de Tela Resiliente (mss + Fallback)
 # ==========================================
@@ -1647,6 +1671,7 @@ async def stream_screen(ws):
             pass
 
 async def run_client():
+    print(f"\n[GESTORLAB] Agente iniciado — versão {AGENT_VERSION} ({time.strftime('%d/%m/%Y %H:%M:%S')})", flush=True)
     MAIN_LOOP["loop"] = asyncio.get_running_loop()
     ensure_startup_persistence()
     # Se o agente caiu com a tela bloqueada, o Gerenciador de Tarefas ficaria desativado.
