@@ -34,7 +34,7 @@ import hmac
 
 # Versão do agente. BUMPE este número a cada release do agente: o servidor compara com
 # a versão que ele serve e envia o código novo para o agente se atualizar sozinho.
-AGENT_VERSION = 1
+AGENT_VERSION = 2
 
 # Bibliotecas de captura de tela (carregadas tarde por _load_capture_libs, para o boot
 # chegar rápido à tela de login do aluno).
@@ -62,6 +62,18 @@ WM_SYSKEYDOWN = 0x0104
 WM_QUIT = 0x0012
 
 HOOKPROC = ctypes.WINFUNCTYPE(wintypes.LPARAM, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+
+# Tipos explícitos: sem isso, em Windows 64-bit o lParam (ponteiro) é convertido para int de
+# 32 bits e estoura (OverflowError) a CADA tecla — o teclado parava de funcionar e o
+# Python ficava "não respondendo".
+user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+user32.SetWindowsHookExW.restype = wintypes.HHOOK
+user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+user32.CallNextHookEx.restype = wintypes.LPARAM
+user32.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+user32.UnhookWindowsHookEx.restype = wintypes.BOOL
+user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+user32.GetAsyncKeyState.restype = ctypes.c_short
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
     _fields_ = [
