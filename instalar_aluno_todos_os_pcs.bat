@@ -9,7 +9,8 @@ rem     apontando para este arquivo na pasta de rede (roda como SISTEMA, sem per
 rem
 rem  Depois de instalado, o programa inicia sozinho com o Windows, sem a caixa
 rem  "Abrir arquivo - Aviso de seguranca" (ela so aparece para programas em disco de rede).
-rem  Pode rodar de novo para ATUALIZAR: a pasta "dados" do PC (config.json) e preservada.
+rem  Pode rodar de novo para ATUALIZAR: fecha o agente, troca os arquivos e atualiza o
+rem  config.json (servidor/TLS/chave), preservando o resto da pasta "dados" (logs, regras).
 rem ============================================================================
 setlocal
 set "ORIGEM=%~dp0"
@@ -21,11 +22,14 @@ if not exist "%ORIGEM%%EXE%" (
     exit /b 1
 )
 
-rem Se o programa estiver aberto, os arquivos estao em uso e nao podem ser trocados.
+rem Se o programa estiver aberto, fecha-o para liberar os arquivos (ao encerrar o .exe,
+rem o pythonw filho tambem e encerrado pelo job). Assim a reinstalacao nao trava.
 tasklist /fi "imagename eq %EXE%" 2>nul | find /i "%EXE%" >nul
 if not errorlevel 1 (
-    echo O GestorLab ja esta em execucao neste PC. Feche-o antes de atualizar.
-    exit /b 0
+    echo Fechando o GestorLab para atualizar...
+    taskkill /F /IM "%EXE%" >nul 2>&1
+    rem Da um tempo para os arquivos liberarem antes de copiar.
+    ping -n 3 127.0.0.1 >nul
 )
 
 if not exist "%DESTINO%" mkdir "%DESTINO%"
@@ -40,6 +44,11 @@ if errorlevel 8 (
 if not exist "%DESTINO%\dados" (
     if exist "%ORIGEM%dados" robocopy "%ORIGEM%dados" "%DESTINO%\dados" /E /R:2 /W:2 /NFL /NDL /NJH /NJS /NP >nul
 )
+
+rem Atualiza SEMPRE o config.json (servidor, TLS/pin, agent_key), mesmo numa
+rem reinstalacao, preservando o resto da pasta dados (logs, regras salvas).
+if not exist "%DESTINO%\dados" mkdir "%DESTINO%\dados"
+if exist "%ORIGEM%dados\config.json" copy /Y "%ORIGEM%dados\config.json" "%DESTINO%\dados\config.json" >nul
 
 rem Inicio automatico para todos os usuarios (chave do computador, nao do usuario).
 reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v GestorLabAgent /t REG_SZ /d "\"%DESTINO%\%EXE%\" --autostart" /f >nul
