@@ -34,7 +34,7 @@ import hmac
 
 # Versão do agente. BUMPE este número a cada release do agente: o servidor compara com
 # a versão que ele serve e envia o código novo para o agente se atualizar sozinho.
-AGENT_VERSION = 3
+AGENT_VERSION = 4
 
 # Bibliotecas de captura de tela (carregadas tarde por _load_capture_libs, para o boot
 # chegar rápido à tela de login do aluno).
@@ -695,8 +695,25 @@ class UIManager:
         
         # Recupera foco agressivamente se o usuário tentar clicar fora — mas NÃO enquanto
         # a telinha de desbloqueio do admin estiver aberta (senão rouba o foco dela).
-        win.bind("<FocusOut>", lambda e: None if self.admin_unlock_window else win.after(
-            10, lambda: (win.lift(), win.attributes("-topmost", True), win.focus_force())))
+        # (Só age se o foco saiu do programa — ver o comentário na tela de login: reagir a
+        # qualquer FocusOut cria loop de foco e trava a interface.)
+        def _lock_check_focus():
+            try:
+                if self.admin_unlock_window or not self.lock_window or win.focus_get() is not None:
+                    return
+                win.lift()
+                win.attributes("-topmost", True)
+                win.focus_force()
+            except Exception:
+                pass
+        lock_focus_pending = {"v": False}
+
+        def _lock_focus_out(_e=None):
+            if lock_focus_pending["v"] or self.admin_unlock_window:
+                return
+            lock_focus_pending["v"] = True
+            win.after(200, lambda: (lock_focus_pending.update(v=False), _lock_check_focus()))
+        win.bind("<FocusOut>", _lock_focus_out)
 
         def keep_top():
             if not (self.is_locked and self.lock_window):
@@ -902,13 +919,39 @@ class UIManager:
                 win.after(150, lambda: _grab_login_focus(attempt + 1))
         _grab_login_focus()
 
-        # Se o foco escapar da janela, traz de volta PARA O CAMPO (não só para a janela) —
-        # mas não enquanto a telinha de desbloqueio do admin estiver aberta.
-        def _refocus_entry(_e=None):
+        # Se o foco escapar do PROGRAMA, traz de volta para o campo. Cuidado: no Tkinter um
+        # bind na janela também dispara para os campos dentro dela, então trocar de campo
+        # (matrícula -> senha) gera FocusOut. Reagir a isso criava um loop infinito de
+        # foco que travava a interface ("não está respondendo"). Por isso:
+        #  - só agimos se, depois de um instante, NENHUM widget nosso tiver o foco;
+        #  - no máximo uma vez a cada 0,5 s; nunca com a telinha de admin aberta.
+        refocus_state = {"pending": False, "last": 0.0}
+
+        def _check_focus_lost():
+            refocus_state["pending"] = False
             if not self.login_window or self.admin_unlock_window:
                 return
-            win.after(50, lambda: (win.lift(), win.attributes("-topmost", True),
-                                   win.focus_force(), entry_mat.focus_set()) if not self.admin_unlock_window else None)
+            try:
+                if win.focus_get() is not None:
+                    return   # o foco só mudou de campo dentro da tela: nada a fazer
+            except Exception:
+                pass
+            if time.monotonic() - refocus_state["last"] < 0.5:
+                return
+            refocus_state["last"] = time.monotonic()
+            try:
+                win.lift()
+                win.attributes("-topmost", True)
+                win.focus_force()
+                entry_mat.focus_set()
+            except Exception:
+                pass
+
+        def _refocus_entry(_e=None):
+            if refocus_state["pending"] or not self.login_window or self.admin_unlock_window:
+                return
+            refocus_state["pending"] = True
+            win.after(200, _check_focus_lost)
         win.bind("<FocusOut>", _refocus_entry)
 
     def _on_student_authenticated(self, student_info):
