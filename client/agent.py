@@ -22,8 +22,6 @@ if os.path.isdir(_tcl_root):
 import tkinter as tk
 import winsound
 import websockets
-from PIL import Image
-import mss
 import ctypes
 from ctypes import wintypes
 import winreg
@@ -33,6 +31,11 @@ import urllib.error
 import http.client
 import ssl
 import hmac
+
+# Bibliotecas de captura de tela (carregadas tarde por _load_capture_libs, para o boot
+# chegar rápido à tela de login do aluno).
+Image = None
+mss = None
 
 # Habilitar DPI Awareness para precisão milimétrica de cliques no Windows
 user32 = ctypes.windll.user32
@@ -698,13 +701,14 @@ class UIManager:
         win.configure(bg="#0b0f19")
         win.attributes("-fullscreen", True)
         win.attributes("-topmost", True)
-        win.overrideredirect(True)
+        # SEM overrideredirect aqui: com ele o Windows não ativa a janela, e os campos
+        # não recebem foco nem cursor (o aluno não conseguia digitar). O -fullscreen já
+        # deixa a janela sem bordas e cobrindo a tela; o gancho de teclado impede a fuga.
 
         # Suprime qualquer evento de fechamento de janela
         win.protocol("WM_DELETE_WINDOW", lambda: "break")
         win.bind("<Alt-F4>", lambda e: "break")
         win.bind("<Escape>", lambda e: "break")
-        win.bind("<FocusOut>", lambda e: win.after(10, lambda: (win.lift(), win.attributes("-topmost", True), win.focus_force())))
 
         def keep_top():
             if self.is_login_locked and self.login_window:
@@ -801,7 +805,30 @@ class UIManager:
         btn_entrar.pack(fill="x", ipady=6, pady=(5, 0))
 
         win.bind("<Return>", lambda e: submit_login())
-        entry_mat.focus_set()
+
+        # Ativa a janela e põe o cursor no campo de matrícula. Janela em tela cheia às
+        # vezes sobe sem foco (principalmente no boot), então reasseguramos por ~1,3s.
+        def _grab_login_focus(attempt=0):
+            if not self.login_window:
+                return
+            try:
+                win.lift()
+                win.attributes("-topmost", True)
+                win.focus_force()
+                entry_mat.focus_set()
+            except Exception:
+                pass
+            if attempt < 8:
+                win.after(150, lambda: _grab_login_focus(attempt + 1))
+        _grab_login_focus()
+
+        # Se o foco escapar da janela, traz de volta PARA O CAMPO (não só para a janela).
+        def _refocus_entry(_e=None):
+            if not self.login_window:
+                return
+            win.after(50, lambda: (win.lift(), win.attributes("-topmost", True),
+                                   win.focus_force(), entry_mat.focus_set()))
+        win.bind("<FocusOut>", _refocus_entry)
 
     def _on_student_authenticated(self, student_info):
         self._destroy_student_login_window()
@@ -922,6 +949,18 @@ DEFAULT_STREAM = dict(stream_settings)
 KEEPALIVE_SECONDS = 5.0   # quadro parado é reenviado só a cada tanto
 _last_frame_hash = None
 _last_frame_sent = 0.0
+
+
+def _load_capture_libs():
+    """Importa mss e PIL só quando a captura de tela começa. Mantê-los fora do import
+    inicial faz a tela de login do aluno aparecer bem mais rápido no boot."""
+    global Image, mss
+    if mss is None:
+        import mss as _mss
+        from PIL import Image as _Image
+        mss = _mss
+        Image = _Image
+
 
 def capture_screen_base64(sct_instance, scale=0.5, quality=45):
     """Captura a tela em JPEG/base64. Devolve None se a tela não mudou (poupa rede e CPU).
@@ -1308,6 +1347,7 @@ def rules_worker() -> None:
         time.sleep(RULES_CHECK_SECONDS)
 
 async def stream_screen(ws):
+    _load_capture_libs()
     sct = mss.mss()
     capture_fail_count = 0
     try:
