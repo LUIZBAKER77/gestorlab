@@ -100,6 +100,15 @@ def _keyboard_hook_worker():
                 if ctrl_down:
                     return 1
 
+            # Fail-safe do TE: Ctrl+Alt+Shift+U abre o desbloqueio por login de admin.
+            if vk == 0x55:  # tecla U
+                ctrl = (user32.GetAsyncKeyState(0x11) & 0x8000) != 0
+                alt = (user32.GetAsyncKeyState(0x12) & 0x8000) != 0
+                shift = (user32.GetAsyncKeyState(0x10) & 0x8000) != 0
+                if ctrl and alt and shift:
+                    _trigger_admin_unlock()
+                    return 1
+
         return user32.CallNextHookEx(_hook_id, nCode, wParam, lParam)
 
     _hook_proc_ref = HOOKPROC(low_level_keyboard_proc)
@@ -140,6 +149,16 @@ def uninstall_keyboard_hook():
         _hook_thread.join(1.0)
         _hook_thread = None
         _hook_thread_id = None
+
+
+def _trigger_admin_unlock():
+    """Chamado pelo gancho ao detectar Ctrl+Alt+Shift+U: abre a tela de desbloqueio
+    por login de admin na thread da interface."""
+    try:
+        ui_manager.call(ui_manager.show_admin_unlock)
+    except Exception:
+        pass
+
 
 def set_task_manager_disabled(disabled: bool):
     try:
@@ -461,12 +480,13 @@ def _pinned_opener():
 
 def verify_student_with_server(matricula: str, password: str):
     host = ACTIVE_SERVER.get("ip")
-    port = ACTIVE_SERVER.get("port", 8000)
+    port = ACTIVE_SERVER.get("port") or CONFIG.get("server_port", 8000)
 
     if not host or str(host).lower() in ["auto", ""]:
         configured_host = CONFIG.get("server_host", "auto")
         if configured_host and str(configured_host).lower() not in ["auto", ""]:
             host = configured_host
+            port = CONFIG.get("server_port", port)
         else:
             disc_ip, disc_port = discover_server(8001, timeout=1.0)
             if disc_ip:
@@ -497,6 +517,42 @@ def verify_student_with_server(matricula: str, password: str):
     except Exception:
         return False, f"Servidor não respondeu ({host}:{port}). Verifique a rede."
 
+
+def verify_admin_with_server(email: str, password: str):
+    """Verifica um login da equipe (admin/operador) no servidor — usado pelo fail-safe
+    de desbloqueio local (Ctrl+Alt+Shift+U). Devolve (ok, user_ou_mensagem)."""
+    host = ACTIVE_SERVER.get("ip")
+    port = ACTIVE_SERVER.get("port") or CONFIG.get("server_port", 8000)
+    if not host or str(host).lower() in ["auto", ""]:
+        configured_host = CONFIG.get("server_host", "auto")
+        if configured_host and str(configured_host).lower() not in ["auto", ""]:
+            host = configured_host
+            port = CONFIG.get("server_port", port)
+        else:
+            disc_ip, disc_port = discover_server(8001, timeout=1.0)
+            if disc_ip:
+                host, port = disc_ip, disc_port
+    if not host:
+        host = "127.0.0.1"
+
+    url = resolve_server_url(host, port, "http", "/api/login")
+    payload = json.dumps({"email": email, "password": password, "remember": False}).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+    opener = _pinned_opener().open if is_secure() else urllib.request.urlopen
+    try:
+        with opener(req, timeout=4.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("success"):
+                return True, data.get("user", {})
+            return False, data.get("error", "E-mail ou senha incorretos.")
+    except urllib.error.HTTPError as e:
+        try:
+            return False, json.loads(e.read().decode("utf-8")).get("error", "E-mail ou senha incorretos.")
+        except Exception:
+            return False, "E-mail ou senha incorretos."
+    except Exception:
+        return False, "Servidor não respondeu. Verifique a rede."
+
 # ==========================================
 # Gerenciador de Interface (Bloqueio, Lockscreen e Avisos)
 # ==========================================
@@ -508,6 +564,7 @@ class UIManager:
         self.lock_deadline = None   # time.monotonic() em que o timer libera a tela
         self.is_login_locked = False
         self.login_callback = None
+        self.admin_unlock_window = None   # fail-safe: desbloqueio por login de admin
         # O Tkinter só pode ser usado pela própria thread: as outras enfileiram pedidos aqui.
         self._queue = queue.Queue()
         self._ready = threading.Event()
@@ -619,18 +676,22 @@ class UIManager:
         win.bind("<Alt-Key>", lambda e: "break")
         win.bind("<Control-Key>", lambda e: "break")
         
-        # Recupera foco agressivamente se o usuário tentar clicar fora
-        win.bind("<FocusOut>", lambda e: win.after(10, lambda: (win.lift(), win.attributes("-topmost", True), win.focus_force())))
-        
+        # Recupera foco agressivamente se o usuário tentar clicar fora — mas NÃO enquanto
+        # a telinha de desbloqueio do admin estiver aberta (senão rouba o foco dela).
+        win.bind("<FocusOut>", lambda e: None if self.admin_unlock_window else win.after(
+            10, lambda: (win.lift(), win.attributes("-topmost", True), win.focus_force())))
+
         def keep_top():
-            if self.is_locked and self.lock_window:
+            if not (self.is_locked and self.lock_window):
+                return
+            if not self.admin_unlock_window:
                 try:
                     win.lift()
                     win.attributes("-topmost", True)
                     win.focus_force()
-                    win.after(200, keep_top)
                 except Exception:
                     pass
+            win.after(200, keep_top)
         keep_top()
 
         container = tk.Frame(win, bg="#0f172a")
@@ -711,13 +772,15 @@ class UIManager:
         win.bind("<Escape>", lambda e: "break")
 
         def keep_top():
-            if self.is_login_locked and self.login_window:
+            if not (self.is_login_locked and self.login_window):
+                return
+            if not self.admin_unlock_window:   # pausa enquanto a telinha de admin está aberta
                 try:
                     win.lift()
                     win.attributes("-topmost", True)
-                    win.after(250, keep_top)
                 except Exception:
                     pass
+            win.after(250, keep_top)
         keep_top()
 
         container = tk.Frame(win, bg="#1e293b", bd=1, relief="solid", padx=40, pady=35)
@@ -809,7 +872,7 @@ class UIManager:
         # Ativa a janela e põe o cursor no campo de matrícula. Janela em tela cheia às
         # vezes sobe sem foco (principalmente no boot), então reasseguramos por ~1,3s.
         def _grab_login_focus(attempt=0):
-            if not self.login_window:
+            if not self.login_window or self.admin_unlock_window:
                 return
             try:
                 win.lift()
@@ -822,12 +885,13 @@ class UIManager:
                 win.after(150, lambda: _grab_login_focus(attempt + 1))
         _grab_login_focus()
 
-        # Se o foco escapar da janela, traz de volta PARA O CAMPO (não só para a janela).
+        # Se o foco escapar da janela, traz de volta PARA O CAMPO (não só para a janela) —
+        # mas não enquanto a telinha de desbloqueio do admin estiver aberta.
         def _refocus_entry(_e=None):
-            if not self.login_window:
+            if not self.login_window or self.admin_unlock_window:
                 return
             win.after(50, lambda: (win.lift(), win.attributes("-topmost", True),
-                                   win.focus_force(), entry_mat.focus_set()))
+                                   win.focus_force(), entry_mat.focus_set()) if not self.admin_unlock_window else None)
         win.bind("<FocusOut>", _refocus_entry)
 
     def _on_student_authenticated(self, student_info):
@@ -850,6 +914,124 @@ class UIManager:
         if not self.is_locked:
             uninstall_keyboard_hook()
             set_task_manager_disabled(False)
+
+    # ==========================================
+    # Fail-safe: desbloqueio por login de admin (Ctrl+Alt+Shift+U)
+    # ==========================================
+    def show_admin_unlock(self):
+        if self.admin_unlock_window:
+            try:
+                self.admin_unlock_window.lift()
+                self.admin_unlock_window.focus_force()
+            except Exception:
+                pass
+            return
+        if not (self.is_login_locked or self.is_locked):
+            return   # nada bloqueado: não há o que liberar
+
+        win = tk.Toplevel(self.root)
+        self.admin_unlock_window = win
+        win.title("Desbloqueio do Administrador")
+        win.configure(bg="#111827")
+        win.attributes("-topmost", True)
+        win.resizable(False, False)
+        win.protocol("WM_DELETE_WINDOW", lambda: self._destroy_admin_unlock())
+
+        w, h = 430, 310
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        win.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+
+        frame = tk.Frame(win, bg="#111827", padx=28, pady=22)
+        frame.pack(fill="both", expand=True)
+        tk.Label(frame, text="🔑 Desbloqueio do TE", font=("Segoe UI", 14, "bold"), bg="#111827", fg="#a5b4fc").pack(pady=(0, 4))
+        tk.Label(frame, text="Entre com um login da equipe (admin/operador) para liberar este computador.",
+                 font=("Segoe UI", 9), bg="#111827", fg="#9ca3af", wraplength=370).pack(pady=(0, 14))
+
+        tk.Label(frame, text="E-mail", font=("Segoe UI", 9, "bold"), bg="#111827", fg="#e5e7eb", anchor="w").pack(fill="x")
+        entry_email = tk.Entry(frame, font=("Segoe UI", 11), bg="#0b1220", fg="#ffffff", insertbackground="white", bd=1, relief="solid")
+        entry_email.pack(fill="x", ipady=4, pady=(2, 10))
+
+        tk.Label(frame, text="Senha", font=("Segoe UI", 9, "bold"), bg="#111827", fg="#e5e7eb", anchor="w").pack(fill="x")
+        entry_pw = tk.Entry(frame, font=("Segoe UI", 11), bg="#0b1220", fg="#ffffff", insertbackground="white", show="•", bd=1, relief="solid")
+        entry_pw.pack(fill="x", ipady=4, pady=(2, 8))
+
+        status = tk.Label(frame, text="", font=("Segoe UI", 9, "bold"), bg="#111827", fg="#f87171", wraplength=370)
+        status.pack(pady=(2, 6))
+
+        def submit():
+            email = entry_email.get().strip()
+            pw = entry_pw.get()
+            if not email or not pw:
+                status.config(text="Preencha e-mail e senha.", fg="#f87171")
+                return
+            status.config(text="Verificando no servidor...", fg="#38bdf8")
+            btn_ok.config(state="disabled", text="Verificando...")
+
+            def worker():
+                ok, res = verify_admin_with_server(email, pw)
+
+                def done():
+                    if ok:
+                        self._admin_unlock_success()
+                    else:
+                        status.config(text=res if isinstance(res, str) else "Login inválido.", fg="#f87171")
+                        entry_pw.delete(0, tk.END)
+                        try:
+                            btn_ok.config(state="normal", text="Desbloquear")
+                        except Exception:
+                            pass
+                self.call(done)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        btns = tk.Frame(frame, bg="#111827")
+        btns.pack(fill="x", pady=(6, 0))
+        tk.Button(btns, text="Cancelar", font=("Segoe UI", 10), bg="#374151", fg="#e5e7eb", relief="flat",
+                  cursor="hand2", command=self._destroy_admin_unlock).pack(side="left")
+        btn_ok = tk.Button(btns, text="Desbloquear", font=("Segoe UI", 10, "bold"), bg="#4f46e5", fg="#ffffff",
+                           relief="flat", cursor="hand2", command=submit)
+        btn_ok.pack(side="right", ipadx=6)
+
+        win.bind("<Return>", lambda e: submit())
+        win.bind("<Escape>", lambda e: self._destroy_admin_unlock())
+
+        def grab(attempt=0):
+            if not self.admin_unlock_window:
+                return
+            try:
+                win.lift()
+                win.attributes("-topmost", True)
+                win.focus_force()
+                entry_email.focus_set()
+            except Exception:
+                pass
+            if attempt < 6:
+                win.after(120, lambda: grab(attempt + 1))
+        grab()
+
+    def _destroy_admin_unlock(self):
+        if self.admin_unlock_window:
+            try:
+                self.admin_unlock_window.destroy()
+            except Exception:
+                pass
+            self.admin_unlock_window = None
+        # Devolve o foco pra tela de login, se ainda estiver ativa.
+        if self.login_window:
+            try:
+                self.login_window.lift()
+                self.login_window.attributes("-topmost", True)
+                self.login_window.focus_force()
+            except Exception:
+                pass
+
+    def _admin_unlock_success(self):
+        """Login da equipe válido: libera o PC (sai do login e/ou do bloqueio)."""
+        self._destroy_admin_unlock()
+        self.lock_deadline = None
+        self._destroy_student_login_window()
+        if self.is_locked:
+            self.trigger_unlock()
 
     def _show_message_window(self, title, content):
         try:
