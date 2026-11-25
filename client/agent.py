@@ -34,7 +34,7 @@ import hmac
 
 # Versão do agente. BUMPE este número a cada release do agente: o servidor compara com
 # a versão que ele serve e envia o código novo para o agente se atualizar sozinho.
-AGENT_VERSION = 2
+AGENT_VERSION = 3
 
 # Bibliotecas de captura de tela (carregadas tarde por _load_capture_libs, para o boot
 # chegar rápido à tela de login do aluno).
@@ -1180,6 +1180,15 @@ def _load_capture_libs():
     if mss is None:
         import mss as _mss
         from PIL import Image as _Image
+        # O mss captura com SRCCOPY|CAPTUREBLT. O CAPTUREBLT força o Windows a compor
+        # janelas em camadas e costuma travar/estourar o tempo ("BitBlt: tempo limite
+        # atingido"), principalmente com a nossa tela de login em tela cheia por cima.
+        # Sem ele (só SRCCOPY) a captura é estável.
+        try:
+            import mss.windows.gdi as _gdi
+            _gdi.CAPTUREBLT = 0
+        except Exception:
+            pass
         mss = _mss
         Image = _Image
 
@@ -1613,9 +1622,33 @@ def rules_worker() -> None:
             print(f"[Regras] Erro: {e}")
         time.sleep(RULES_CHECK_SECONDS)
 
+_capture_executor = None
+_capture_state = {"sct": None}
+
+
+def _capture_frame(scale, quality):
+    """Roda SEMPRE na thread de captura (o mss/GDI fica todo numa só thread)."""
+    if _capture_state["sct"] is None:
+        _capture_state["sct"] = mss.mss()
+    return capture_screen_base64(_capture_state["sct"], scale=scale, quality=quality)
+
+
+def _reset_capture():
+    try:
+        if _capture_state["sct"] is not None:
+            _capture_state["sct"].close()
+    except Exception:
+        pass
+    _capture_state["sct"] = None
+
+
 async def stream_screen(ws):
+    global _capture_executor
     _load_capture_libs()
-    sct = mss.mss()
+    if _capture_executor is None:
+        import concurrent.futures
+        _capture_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="captura")
+    loop = asyncio.get_running_loop()
     capture_fail_count = 0
     try:
         while True:
@@ -1628,23 +1661,20 @@ async def stream_screen(ws):
                 curr_quality = stream_settings.get("quality", 45)
 
                 try:
-                    frame_data = capture_screen_base64(sct, scale=curr_scale, quality=curr_quality)
+                    # A captura roda numa thread própria: um BitBlt lento não congela mais a
+                    # conexão. Se demorar demais, o quadro é pulado.
+                    frame_data = await asyncio.wait_for(
+                        loop.run_in_executor(_capture_executor, _capture_frame, curr_scale, curr_quality),
+                        timeout=5.0)
                     capture_fail_count = 0
                 except Exception as e:
                     capture_fail_count += 1
                     frame_data = None
                     if capture_fail_count == 1:
-                        print(f"[Captura de tela falhou]: {e}")
+                        print(f"[Captura de tela falhou]: {type(e).__name__}: {e}")
                     if capture_fail_count % 3 == 0:
                         # Recria o mss (contexto gráfico pode ter ficado inválido).
-                        try:
-                            sct.close()
-                        except Exception:
-                            pass
-                        try:
-                            sct = mss.mss()
-                        except Exception:
-                            pass
+                        loop.run_in_executor(_capture_executor, _reset_capture)
                     await asyncio.sleep(1.0)
 
                 if frame_data:
@@ -1664,11 +1694,6 @@ async def stream_screen(ws):
 
     except websockets.ConnectionClosed:
         pass
-    finally:
-        try:
-            sct.close()
-        except Exception:
-            pass
 
 async def run_client():
     print(f"\n[GESTORLAB] Agente iniciado — versão {AGENT_VERSION} ({time.strftime('%d/%m/%Y %H:%M:%S')})", flush=True)
