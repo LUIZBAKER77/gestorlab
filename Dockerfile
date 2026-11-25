@@ -11,6 +11,10 @@ RUN pip install --no-cache-dir -r requirements-professor.txt
 # Codigo do servidor (main.py, auth.py, config.py, database.py, static/).
 COPY server/ /app/
 
+# Codigo do agente do aluno, servido para auto-atualizacao (o servidor le a versao dele
+# e envia aos alunos desatualizados). Fonte unica: client/agent.py.
+COPY client/agent.py /app/agent_update.py
+
 # Dados gravaveis (banco, contas, config, logs) ficam num volume persistente.
 # Monte um volume do Dokploy em /data para nao perder nada no redeploy.
 ENV GESTORLAB_DATA=/data \

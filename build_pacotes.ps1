@@ -56,8 +56,10 @@ function New-Package($name, $exeName, $define, $icon, $requirements, $codeFiles,
 
 # ---------- Professor ----------
 $prof = New-Package "1_PROFESSOR" "GestorLab Professor.exe" "PROFESSOR" "server\icon.ico" "requirements-professor.txt" `
-    @("server\main.py", "server\auth.py", "server\config.py", "server\database.py", "server\static") $false
+    @("server\main.py", "server\auth.py", "server\config.py", "server\database.py", "server\tls.py", "server\static") $false
 Copy-Item (Join-Path $root "liberar_firewall.bat") $prof
+# Código do agente para auto-atualização (servido aos alunos desatualizados).
+Copy-Item (Join-Path $root "client\agent.py") (Join-Path $prof "app\code\agent_update.py") -Force
 
 # ---------- Aluno ----------
 $alu = New-Package "2_ALUNO" "GestorLab Aluno.exe" "ALUNO" "client\icon.ico" "requirements-aluno.txt" `

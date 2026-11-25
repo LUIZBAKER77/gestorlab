@@ -23,11 +23,37 @@ from pydantic import BaseModel, Field
 
 import auth
 import database
-from config import CONFIG, STATIC_DIR, save_config
+from config import CONFIG, STATIC_DIR, APP_DIR, save_config
 
 PORT = int(CONFIG["port"])
 DISCOVERY_PORT = int(CONFIG["discovery_port"])
 MAX_UPLOAD_BYTES = int(CONFIG["max_upload_mb"]) * 1024 * 1024
+
+# Auto-atualização do agente: o servidor guarda o código do agente (agent_update.py,
+# colocado ao lado do código do servidor pelo build/Dockerfile) e a versão dele. Quando
+# um aluno conecta com uma versão mais antiga, o servidor envia o código novo e o agente
+# se atualiza sozinho. Fica None/0 quando o arquivo não está presente (auto-update off).
+AGENT_UPDATE_CODE = None
+AGENT_UPDATE_VERSION = 0
+
+
+def _load_agent_update():
+    global AGENT_UPDATE_CODE, AGENT_UPDATE_VERSION
+    try:
+        with open(os.path.join(APP_DIR, "agent_update.py"), encoding="utf-8") as f:
+            code = f.read()
+        m = re.search(r"AGENT_VERSION\s*=\s*(\d+)", code)
+        if m:
+            AGENT_UPDATE_CODE = code
+            AGENT_UPDATE_VERSION = int(m.group(1))
+            print(f"[GESTORLAB] Auto-update do agente ativo (versão {AGENT_UPDATE_VERSION}).")
+    except FileNotFoundError:
+        print("[GESTORLAB] agent_update.py ausente; auto-update do agente desativado.")
+    except Exception as e:
+        print(f"[GESTORLAB] Falha ao carregar agent_update.py: {e}")
+
+
+_load_agent_update()
 
 # Comandos que o painel pode repassar aos agentes dos alunos.
 ALLOWED_ACTIONS = {
@@ -834,6 +860,22 @@ async def websocket_client(websocket: WebSocket):
         await broadcast_to_dashboards({"type": "client_connected", "client": public_info(info)})
         await websocket.send_text(json.dumps({"type": "registered", "id": client_id}))
         await websocket.send_text(json.dumps(rules_payload()))
+
+        # Auto-atualização: se este agente está mais antigo que o código disponível, envia o novo.
+        if AGENT_UPDATE_CODE:
+            try:
+                client_ver = int(init.get("agent_version") or 0)
+            except (TypeError, ValueError):
+                client_ver = 0
+            if AGENT_UPDATE_VERSION > client_ver:
+                print(f"[GESTORLAB] Enviando atualização do agente para {client_id}: "
+                      f"v{client_ver} -> v{AGENT_UPDATE_VERSION}")
+                await websocket.send_text(json.dumps({
+                    "action": "update_agent",
+                    "version": AGENT_UPDATE_VERSION,
+                    "code": AGENT_UPDATE_CODE,
+                }))
+
         if not dashboard_websockets:
             await websocket.send_text(json.dumps({"action": "stream_pause"}))
 

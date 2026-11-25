@@ -5,6 +5,7 @@
 1_PROFESSOR/
 2_ALUNO/
 client/
+!client/agent.py
 launcher/
 python_app/
 _antigo/

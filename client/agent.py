@@ -32,6 +32,10 @@ import http.client
 import ssl
 import hmac
 
+# Versão do agente. BUMPE este número a cada release do agente: o servidor compara com
+# a versão que ele serve e envia o código novo para o agente se atualizar sozinho.
+AGENT_VERSION = 1
+
 # Bibliotecas de captura de tela (carregadas tarde por _load_capture_libs, para o boot
 # chegar rápido à tela de login do aluno).
 Image = None
@@ -1174,6 +1178,47 @@ def capture_screen_base64(sct_instance, scale=0.5, quality=45):
     return f"data:image/jpeg;base64,{b64}"
 
 # ==========================================
+# Auto-atualização do agente
+# ==========================================
+def apply_agent_update(code, version):
+    """Aplica uma atualização do agente enviada pelo servidor: valida, grava o novo
+    agent.py e sai — o lançador .exe reinicia o agente com a versão nova.
+
+    Só aceita em modo seguro (canal com pinning/TLS), para que o código só possa vir do
+    servidor verificado — nunca de um servidor falso."""
+    try:
+        if not is_secure():
+            print("[Update] Ignorado: só aceito atualização em conexão segura (TLS).")
+            return
+        try:
+            new_version = int(version)
+        except (TypeError, ValueError):
+            return
+        if new_version <= AGENT_VERSION:
+            return
+        if not isinstance(code, str) or len(code) < 1000 or "AGENT_VERSION" not in code:
+            print("[Update] Código recebido inválido; ignorado.")
+            return
+        # Não aplica um código que não compila (evita brickar o agente).
+        try:
+            compile(code, "agent.py", "exec")
+        except SyntaxError as e:
+            print(f"[Update] Código novo não compila; ignorado: {e}")
+            return
+
+        target = os.path.abspath(__file__)
+        tmp = target + ".new"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(code)
+        os.replace(tmp, target)
+        print(f"[Update] Atualizado para a versão {new_version}. Reiniciando...")
+        # Sai: o lançador .exe reinicia o agente (while-true), já com o código novo.
+        os._exit(0)
+    except Exception as e:
+        print(f"[Update] Falha ao aplicar atualização: {e}")
+
+
+# ==========================================
 # Comunicação WebSocket com o Professor
 # ==========================================
 async def handle_commands(ws):
@@ -1295,6 +1340,10 @@ async def handle_commands(ws):
                     "matricula": current_student_data["matricula"],
                     "is_logged_in": True
                 }))
+
+            elif action == "update_agent":
+                # O servidor tem uma versão mais nova: aplica e reinicia.
+                apply_agent_update(data.get("code"), data.get("version"))
 
         except websockets.ConnectionClosed:
             break
@@ -1660,6 +1709,7 @@ async def run_client():
                     "turma": current_student_data.get("turma", ""),
                     "agent_key": CONFIG.get("agent_key", ""),
                     "os": windows_name(),
+                    "agent_version": AGENT_VERSION,
                 }
                 await ws.send(json.dumps(register_payload))
                 
