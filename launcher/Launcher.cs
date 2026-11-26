@@ -1,4 +1,4 @@
-// Lançador do GestorLab: inicia o Python embutido (pasta app\), reinicia se cair,
+﻿// Lançador do GestorLab: inicia o Python embutido (pasta app\), reinicia se cair,
 // registra o início automático com o Windows e garante uma única instância.
 // Compilar com:  csc /target:winexe /define:PROFESSOR  (ou /define:ALUNO)  Launcher.cs
 using System;
@@ -51,6 +51,16 @@ static class Launcher
         }
 
         bool autostart = Has(args, "--autostart");
+
+#if !PROFESSOR
+        // Aberto como administrador ("Executar como administrador" na conta do lab):
+        // tranca a pasta, cria o início automático protegido e abre o agente como a
+        // conta do lab (nunca como admin). Tudo num clique, sem o proteger_pasta.bat.
+        if (IsAdmin() && !Has(args, "--sem-protecao"))
+        {
+            return ProtectAndStart(self);
+        }
+#endif
 
         // Rodando de um disco de rede: o Windows pede permissão ("Aviso de segurança") a cada início
         // automático e o programa depende da rede estar pronta. Instala uma cópia no disco do PC e
@@ -150,6 +160,83 @@ static class Launcher
         try { return new DriveInfo(Path.GetPathRoot(dir)).DriveType == DriveType.Network; }   // Z:\ mapeado
         catch { return false; }
     }
+
+#if !PROFESSOR
+    static bool IsAdmin()
+    {
+        try
+        {
+            var id = System.Security.Principal.WindowsIdentity.GetCurrent();
+            return new System.Security.Principal.WindowsPrincipal(id)
+                .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+        }
+        catch { return false; }
+    }
+
+    // Conta que está usando a tela (a do laboratório), mesmo com este processo elevado.
+    static string ConsoleUser()
+    {
+        IntPtr buf; int len;
+        uint session = WTSGetActiveConsoleSessionId();
+        string user = null, domain = null;
+        if (WTSQuerySessionInformation(IntPtr.Zero, session, 5 /*WTSUserName*/, out buf, out len))
+        { user = Marshal.PtrToStringUni(buf); WTSFreeMemory(buf); }
+        if (WTSQuerySessionInformation(IntPtr.Zero, session, 7 /*WTSDomainName*/, out buf, out len))
+        { domain = Marshal.PtrToStringUni(buf); WTSFreeMemory(buf); }
+        if (string.IsNullOrEmpty(user)) return null;
+        return string.IsNullOrEmpty(domain) ? user : domain + "\\" + user;
+    }
+
+    [DllImport("kernel32.dll")] static extern uint WTSGetActiveConsoleSessionId();
+    [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode)]
+    static extern bool WTSQuerySessionInformation(IntPtr server, uint session, int infoClass, out IntPtr buffer, out int bytes);
+    [DllImport("wtsapi32.dll")] static extern void WTSFreeMemory(IntPtr memory);
+
+    static int ProtectAndStart(string self)
+    {
+        string user = ConsoleUser();
+        string me = System.Security.Principal.WindowsIdentity.GetCurrent().Name;
+        if (user == null || string.Equals(user, me, StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show("Abra pela conta do LABORATÓRIO: entre com ela no Windows, clique com o botão direito no " +
+                            "GestorLab Aluno.exe > \"Executar como administrador\" e digite a senha do admin.\n\n" +
+                            "(Aberto direto numa conta de administrador, o agente rodaria na conta errada.)",
+                            "GestorLab", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return 1;
+        }
+
+        string d = baseDir;
+        string icacls = Path.Combine(Environment.SystemDirectory, "icacls.exe");
+        string schtasks = Path.Combine(Environment.SystemDirectory, "schtasks.exe");
+        int fails = 0;
+        // Dono = Administradores; Admin/SYSTEM total; Usuários só leem e executam.
+        fails += RunHidden(icacls, "\"" + d + "\" /setowner *S-1-5-32-544 /T /C /Q") != 0 ? 1 : 0;
+        fails += RunHidden(icacls, "\"" + d + "\" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX /T /C /Q") != 0 ? 1 : 0;
+        // Onde o agente grava: dados\ (logs, regras) e app\code\ (auto-atualização).
+        RunHidden(icacls, "\"" + Path.Combine(d, "dados") + "\" /grant *S-1-5-32-545:(OI)(CI)M /T /C /Q");
+        RunHidden(icacls, "\"" + Path.Combine(d, @"app\code") + "\" /grant *S-1-5-32-545:(OI)(CI)M /T /C /Q");
+        string cfg = Path.Combine(d, @"dados\config.json");
+        if (File.Exists(cfg))
+            RunHidden(icacls, "\"" + cfg + "\" /inheritance:r /grant:r *S-1-5-32-544:F *S-1-5-18:F *S-1-5-32-545:R /C /Q");
+        foreach (string bat in new[] { "desinstalar_aluno.bat", "proteger_pasta.bat" })
+            try { File.Delete(Path.Combine(d, bat)); } catch { }
+
+        // Início automático que só admin apaga, rodando como a conta do lab.
+        int task = RunHidden(schtasks, "/Create /F /TN \"GestorLab Aluno\" /TR \"\\\"" + self + "\\\" --autostart\" " +
+                                       "/SC ONLOGON /RU \"" + user + "\" /IT /RL LIMITED");
+        // Abre o agente agora, como a conta do lab (não como admin).
+        int run = task == 0 ? RunHidden(schtasks, "/Run /TN \"GestorLab Aluno\"") : 1;
+        Log("Proteção aplicada para " + user + " (falhas icacls=" + fails + ", tarefa=" + task + ", iniciar=" + run + ")");
+
+        if (fails > 0 || task != 0)
+            MessageBox.Show("A proteção foi aplicada só em parte (veja dados\\lancador.log).", "GestorLab",
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        else
+            Info("Pronto! Pasta protegida e início automático configurado para a conta " + user + ".\n" +
+                 "O agente já está abrindo.");
+        return 0;
+    }
+#endif
 
     static int RunHidden(string file, string arguments)
     {

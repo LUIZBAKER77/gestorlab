@@ -1,7 +1,7 @@
-# Gera os pacotes de entrega a partir de server\, client\ e launcher\ (única fonte do código):
+﻿# Gera os pacotes de entrega a partir de server\, client\ e launcher\ (Ãºnica fonte do cÃ³digo):
 #   1_PROFESSOR\GestorLab Professor.exe + app\
 #   2_ALUNO\GestorLab Aluno.exe + app\
-# A pasta "dados" de cada pacote (banco, senhas, configuração) é preservada.
+# A pasta "dados" de cada pacote (banco, senhas, configuraÃ§Ã£o) Ã© preservada.
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
@@ -16,7 +16,7 @@ function New-Package($name, $exeName, $define, $icon, $requirements, $codeFiles,
     Write-Host "`n=== $name ===" -ForegroundColor Cyan
     New-Item -ItemType Directory -Force $pkg | Out-Null
 
-    # Remove só o que é gerado; "dados" fica.
+    # Remove sÃ³ o que Ã© gerado; "dados" fica.
     Get-ChildItem $pkg -Force | Where-Object { $_.Name -ne "dados" } | Remove-Item -Recurse -Force
 
     $py = Join-Path $pkg "app\python"
@@ -26,7 +26,7 @@ function New-Package($name, $exeName, $define, $icon, $requirements, $codeFiles,
     Write-Host "Python embutido..."
     Get-ChildItem $basePy -Force | Where-Object { $_.Name -ne "Lib" } | Copy-Item -Destination $py -Recurse -Force
     New-Item -ItemType Directory -Force "$py\Lib\site-packages" | Out-Null
-    # python312._pth: define onde o Python procura módulos (inclui a pasta do código).
+    # python312._pth: define onde o Python procura mÃ³dulos (inclui a pasta do cÃ³digo).
     Set-Content "$py\python312._pth" -Encoding ASCII -Value @("python312.zip", ".", "..\code", "Lib\site-packages", "import site")
 
     Write-Host "Dependencias ($requirements)..."
@@ -58,7 +58,7 @@ function New-Package($name, $exeName, $define, $icon, $requirements, $codeFiles,
 $prof = New-Package "1_PROFESSOR" "GestorLab Professor.exe" "PROFESSOR" "server\icon.ico" "requirements-professor.txt" `
     @("server\main.py", "server\auth.py", "server\config.py", "server\database.py", "server\tls.py", "server\static") $false
 Copy-Item (Join-Path $root "liberar_firewall.bat") $prof
-# Código do agente para auto-atualização (servido aos alunos desatualizados).
+# CÃ³digo do agente para auto-atualizaÃ§Ã£o (servido aos alunos desatualizados).
 Copy-Item (Join-Path $root "client\agent.py") (Join-Path $prof "app\code\agent_update.py") -Force
 
 # ---------- Aluno ----------
@@ -68,7 +68,6 @@ New-Item -ItemType Directory -Force "$alu\dados" | Out-Null
 if (-not (Test-Path "$alu\dados\config.json")) { Copy-Item (Join-Path $root "client\config.json") "$alu\dados\config.json" }
 Copy-Item (Join-Path $root "congelamento") "$alu\congelamento" -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $root "instalar_aluno_todos_os_pcs.bat") $alu -Force
-Copy-Item (Join-Path $root "proteger_pasta.bat") $alu -Force
 # desinstalar_aluno.bat NAO vai no pacote do aluno (qualquer um poderia rodar); fica com o admin.
 
 Write-Host "`nPronto!" -ForegroundColor Green
