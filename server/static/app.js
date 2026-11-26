@@ -1270,6 +1270,13 @@ function handleStudentSearch(event) {
   }, 250);
 }
 
+function togglePw(btn) {
+  const span = btn.parentElement.querySelector(".pw-text");
+  const shown = span.dataset.shown === "1";
+  span.textContent = shown ? "••••••" : span.dataset.pw;
+  span.dataset.shown = shown ? "0" : "1";
+}
+
 function renderStudentsTable() {
   const tbody = document.getElementById("students-table-body");
   const emptyState = document.getElementById("students-empty-state");
@@ -1314,7 +1321,7 @@ function renderStudentsTable() {
           ${s.turma ? `<span class="bg-slate-900 border border-slate-700 text-slate-300 text-xs px-2 py-0.5 rounded-full">${escapeHtml(s.turma)}</span>` : '<span class="text-slate-500 text-xs italic">Não informada</span>'}
         </td>
         <td class="py-3 px-4 font-mono text-xs">
-          ${s.password_plain ? `<span class="text-amber-300 bg-slate-900 border border-slate-700 px-2 py-0.5 rounded select-all">${escapeHtml(s.password_plain)}</span>` : '<span class="text-slate-500 italic" title="Senha antiga: aparece após o próximo login do aluno ou ao redefinir">desconhecida</span>'}
+          ${s.password_plain ? `<span class="inline-flex items-center gap-1.5"><span class="pw-text text-amber-300 bg-slate-900 border border-slate-700 px-2 py-0.5 rounded select-all" data-pw="${escapeHtml(s.password_plain)}">••••••</span><button type="button" onclick="togglePw(this)" title="Mostrar/ocultar senha" class="text-slate-400 hover:text-white"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg></button></span>` : '<span class="text-slate-500 italic" title="Senha antiga: aparece após o próximo login do aluno ou ao redefinir">desconhecida</span>'}
         </td>
         <td class="py-3 px-4 text-xs text-slate-400">
           ${escapeHtml(s.created_at) || '-'}
