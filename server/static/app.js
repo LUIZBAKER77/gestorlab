@@ -610,6 +610,13 @@ function renderGrid() {
           <span>${isLocked ? 'Desbloquear' : 'Bloquear'}</span>
         </button>
 
+        <!-- Liberar login / pedir login de novo -->
+        <button data-action="${hasStudent ? 'logout' : 'bypass'}"
+                class="flex-1 flex items-center justify-center space-x-1 ${hasStudent ? 'bg-violet-600/80 hover:bg-violet-600' : 'bg-yellow-600/80 hover:bg-yellow-600'} text-white text-xs font-medium py-1.5 px-2 rounded-lg transition"
+                title="${hasStudent ? 'Desconectar este aluno e pedir login novamente' : 'Liberar este PC sem exigir login'}">
+          <span>${hasStudent ? 'Pedir Login' : 'Liberar Login'}</span>
+        </button>
+
         <!-- Mensagem -->
         <button data-action="msg" 
                 class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium p-1.5 rounded-lg transition flex items-center justify-center" title="Enviar mensagem individual">
@@ -692,6 +699,20 @@ function forceStudentLogout(clientId) {
     });
     showToast("Solicitação Enviada", "Tela de identificação aberta no computador do aluno.", "info");
   }
+}
+
+function bypassLoginGroup() {
+  const label = groupLabel();
+  if (!confirm(`Liberar sem login: ${label}?`)) return;
+  sendCommand({ action: "bypass_student_login", target: groupTarget() });
+  showToast("Login Liberado", `${label} liberada sem exigir identificação.`, "success");
+}
+
+function requestLoginGroup() {
+  const label = groupLabel();
+  if (!confirm(`Desconectar os alunos e pedir login novamente: ${label}?`)) return;
+  sendCommand({ action: "student_logout", target: groupTarget() });
+  showToast("Login Solicitado", `Tela de identificação aberta: ${label}.`, "info");
 }
 
 function bypassStudentLogin(clientId) {
