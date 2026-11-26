@@ -34,7 +34,7 @@ import hmac
 
 # Versão do agente. BUMPE este número a cada release do agente: o servidor compara com
 # a versão que ele serve e envia o código novo para o agente se atualizar sozinho.
-AGENT_VERSION = 5
+AGENT_VERSION = 6
 
 # Bibliotecas de captura de tela (carregadas tarde por _load_capture_libs, para o boot
 # chegar rápido à tela de login do aluno).
@@ -1268,13 +1268,37 @@ def _load_capture_libs():
         # janelas em camadas e costuma travar/estourar o tempo ("BitBlt: tempo limite
         # atingido"), principalmente com a nossa tela de login em tela cheia por cima.
         # Sem ele (só SRCCOPY) a captura é estável.
+        # Mas SEM ele as janelas "em camadas" (instaladores, splash, alguns pop-ups) não
+        # aparecem na captura. Então: liga por padrão e, se a captura ficar lenta, desliga
+        # por alguns minutos (ver _grab_adaptive).
         try:
             import mss.windows.gdi as _gdi
-            _gdi.CAPTUREBLT = 0
+            _BLT["gdi"] = _gdi
+            _gdi.CAPTUREBLT = _BLT["flag"]
         except Exception:
             pass
         mss = _mss
         Image = _Image
+
+
+_BLT = {"gdi": None, "flag": 0x40000000, "off_until": 0.0}
+
+
+def _grab_adaptive(sct_instance, monitor):
+    gdi = _BLT["gdi"]
+    if gdi is not None:
+        gdi.CAPTUREBLT = 0 if time.monotonic() < _BLT["off_until"] else _BLT["flag"]
+    t0 = time.monotonic()
+    try:
+        shot = sct_instance.grab(monitor)
+    except Exception:
+        if gdi is not None and gdi.CAPTUREBLT:
+            _BLT["off_until"] = time.monotonic() + 300   # falhou com CAPTUREBLT: 5 min sem
+        raise
+    if gdi is not None and gdi.CAPTUREBLT and time.monotonic() - t0 > 1.0:
+        _BLT["off_until"] = time.monotonic() + 300
+        print("[Captura] Lenta com CAPTUREBLT; desligado por 5 min.")
+    return shot
 
 
 def capture_screen_base64(sct_instance, scale=0.5, quality=45):
@@ -1286,7 +1310,7 @@ def capture_screen_base64(sct_instance, scale=0.5, quality=45):
     """
     global _last_frame_hash, _last_frame_sent
     monitor = sct_instance.monitors[1]
-    screenshot = sct_instance.grab(monitor)
+    screenshot = _grab_adaptive(sct_instance, monitor)
 
     img = Image.frombytes("RGB", screenshot.size, screenshot.rgb)
 
