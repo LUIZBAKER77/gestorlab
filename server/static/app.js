@@ -436,6 +436,7 @@ function sendCommand(payload) {
 }
 
 function updateCounters() {
+  updateLoginButtons();
   const total = clientsMap.size;
   let locked = 0;
   clientsMap.forEach(c => {
@@ -694,24 +695,55 @@ function forceStudentLogout(clientId) {
   }
 }
 
-function bypassLoginGroup() {
-  // Sempre a sala toda: PC esperando login ainda não tem turma (o filtro não o acharia).
-  const waiting = [...clientsMap.values()].filter(c => !(c.info.student_name || "").trim()).length;
-  if (!confirm(`Liberar sem login todos os computadores da sala? (${waiting} aguardando login)`)) return;
-  sendCommand({ action: "bypass_student_login", target: "all" });
-  showToast("Login Liberado", "Todos os computadores foram liberados sem exigir identificação.", "success");
+// "Liberado" = PC liberado sem login pelo painel (o agente manda matricula "Liberado").
+function isBypassed(c) { return (c.info.matricula || "") === "Liberado"; }
+
+function toggleLoginGroup() {
+  const bypassed = [...clientsMap.entries()].filter(([, c]) => isBypassed(c));
+  if (bypassed.length) {
+    if (!confirm(`Pedir login novamente nos ${bypassed.length} computador(es) liberados?`)) return;
+    // Só nos liberados: quem já entrou com a matrícula continua logado.
+    bypassed.forEach(([id]) => sendCommand({ action: "student_logout", target: id }));
+    showToast("Login Solicitado", "Tela de identificação aberta nos computadores liberados.", "info");
+  } else {
+    // Sempre a sala toda: PC esperando login ainda não tem turma (o filtro não o acharia).
+    if (!confirm("Liberar sem login todos os computadores da sala?")) return;
+    sendCommand({ action: "bypass_student_login", target: "all" });
+    showToast("Login Liberado", "Todos os computadores foram liberados sem exigir identificação.", "success");
+  }
 }
 
-function zoomBypassLogin() {
+function zoomToggleLogin() {
   if (!currentZoomId) return;
-  bypassStudentLogin(currentZoomId);
+  const c = clientsMap.get(currentZoomId);
+  if (c && isBypassed(c)) {
+    sendCommand({ action: "student_logout", target: currentZoomId });
+    showToast("Login Solicitado", "Tela de identificação aberta neste computador.", "info");
+  } else {
+    bypassStudentLogin(currentZoomId);
+  }
 }
 
-function requestLoginGroup() {
-  const label = groupLabel();
-  if (!confirm(`Desconectar os alunos e pedir login novamente: ${label}?`)) return;
-  sendCommand({ action: "student_logout", target: groupTarget() });
-  showToast("Login Solicitado", `Tela de identificação aberta: ${label}.`, "info");
+function updateLoginButtons() {
+  const anyBypassed = [...clientsMap.values()].some(isBypassed);
+  const gBtn = document.getElementById("btn-login-toggle");
+  if (gBtn) {
+    document.getElementById("btn-login-toggle-text").textContent = anyBypassed ? "Pedir Login" : "Liberar Login";
+    gBtn.classList.toggle("bg-yellow-600", !anyBypassed);
+    gBtn.classList.toggle("hover:bg-yellow-500", !anyBypassed);
+    gBtn.classList.toggle("bg-violet-600", anyBypassed);
+    gBtn.classList.toggle("hover:bg-violet-500", anyBypassed);
+  }
+  const zBtn = document.getElementById("zoom-btn-bypass");
+  const zc = currentZoomId && clientsMap.get(currentZoomId);
+  if (zBtn) {
+    const b = !!(zc && isBypassed(zc));
+    document.getElementById("zoom-btn-bypass-text").textContent = b ? "Pedir Login" : "Liberar Login";
+    zBtn.classList.toggle("bg-yellow-600", !b);
+    zBtn.classList.toggle("hover:bg-yellow-500", !b);
+    zBtn.classList.toggle("bg-violet-600", b);
+    zBtn.classList.toggle("hover:bg-violet-500", b);
+  }
 }
 
 function bypassStudentLogin(clientId) {
@@ -866,6 +898,7 @@ async function submitFileTransfer() {
 // Modal de Zoom de Tela & Controle Remoto Interativo
 // ==========================================
 function openScreenModal(clientId, hostname) {
+  setTimeout(updateLoginButtons, 0);
   currentZoomId = clientId;
   modalScreenTitle.textContent = `Ao Vivo: ${hostname}`;
   const client = clientsMap.get(clientId);

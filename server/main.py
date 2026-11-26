@@ -216,6 +216,17 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="GestorLab Server", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def no_stale_panel(request: Request, call_next):
+    """O navegador guardava o app.js antigo depois de um deploy: a página nova mostrava
+    botões cujo código não existia ("aperta e nada acontece"). Sempre revalida."""
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or (path.startswith("/static/") and not path.startswith("/static/vendor/")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 def client_ip(request: Request) -> str:
     return request.client.host if request.client else "?"
 

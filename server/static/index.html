@@ -220,20 +220,12 @@
             <span>Desbloquear</span>
           </button>
 
-          <!-- Liberar login (sem identificação) -->
-          <button onclick="bypassLoginGroup()" class="flex items-center space-x-1.5 bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-md shadow-yellow-600/20" title="Liberar os computadores sem exigir login do aluno">
+          <!-- Liberar login / Pedir login (alterna: "Pedir" só depois de liberar) -->
+          <button id="btn-login-toggle" onclick="toggleLoginGroup()" class="flex items-center space-x-1.5 bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-md shadow-yellow-600/20" title="Liberar os computadores sem exigir login do aluno">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
             </svg>
-            <span>Liberar Login</span>
-          </button>
-
-          <!-- Pedir login de novo -->
-          <button onclick="requestLoginGroup()" class="flex items-center space-x-1.5 bg-violet-600 hover:bg-violet-500 active:bg-violet-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-md shadow-violet-600/20" title="Desconectar os alunos e pedir login novamente">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
-            </svg>
-            <span>Pedir Login</span>
+            <span id="btn-login-toggle-text">Liberar Login</span>
           </button>
 
           <!-- Aviso Geral -->
@@ -732,9 +724,9 @@
           </button>
 
           <!-- Mensagem -->
-          <button id="zoom-btn-bypass" onclick="zoomBypassLogin()" class="flex items-center space-x-1 bg-yellow-600 hover:bg-yellow-500 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-yellow-500/50 transition" title="Liberar este computador sem exigir login do aluno">
+          <button id="zoom-btn-bypass" onclick="zoomToggleLogin()" class="flex items-center space-x-1 bg-yellow-600 hover:bg-yellow-500 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-yellow-500/50 transition" title="Liberar este computador sem exigir login do aluno">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-            <span>Liberar Login</span>
+            <span id="zoom-btn-bypass-text">Liberar Login</span>
           </button>
 
           <button id="zoom-btn-msg" onclick="zoomSendMsg()" class="flex items-center space-x-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-blue-500/50 transition">
@@ -1049,6 +1041,6 @@
 
   </div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=7"></script>
 </body>
 </html>
