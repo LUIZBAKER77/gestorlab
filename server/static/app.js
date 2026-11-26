@@ -421,7 +421,7 @@ function handleServerMessage(data) {
       if (data.status === "ok") {
         showToast("Arquivo Entregue com Sucesso!", `'${data.filename}' salvo em ${clientName}`, "success");
       } else {
-        showToast("Falha na Entrega do Arquivo", `Erro ao salvar em ${clientName}`, "error");
+        showToast("Falha na Entrega do Arquivo", `Erro ao salvar em ${clientName}${data.error ? ": " + data.error : ""}`, "error");
       }
       break;
   }
@@ -1067,7 +1067,17 @@ modalScreenContainer.addEventListener("wheel", (e) => {
 }, { passive: false });
 
 // Captura de Teclado no Controle Remoto
+// Digitando num campo do próprio painel (ex.: aviso ao aluno)? A tecla é do painel, não do aluno.
+function isTypingInPanel(e) {
+  const t = e.target;
+  return !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+}
+
 window.addEventListener("keydown", (e) => {
+  if (isRemoteControlActive && currentZoomId && isTypingInPanel(e)) {
+    if (e.key === "Escape") e.target.blur();
+    return;
+  }
   if (!isRemoteControlActive || !currentZoomId) {
     if (e.key === "Escape") closeTopModal();
     return;
@@ -1098,6 +1108,7 @@ window.addEventListener("keydown", (e) => {
 
 window.addEventListener("keyup", (e) => {
   if (!isRemoteControlActive || !currentZoomId) return;
+  if (isTypingInPanel(e)) return;
   if (e.key === "Escape" || e.key === "F12") return;
 
   e.preventDefault();
@@ -1248,6 +1259,9 @@ function renderStudentsTable() {
         </td>
         <td class="py-3 px-4 text-slate-300">
           ${s.turma ? `<span class="bg-slate-900 border border-slate-700 text-slate-300 text-xs px-2 py-0.5 rounded-full">${escapeHtml(s.turma)}</span>` : '<span class="text-slate-500 text-xs italic">Não informada</span>'}
+        </td>
+        <td class="py-3 px-4 font-mono text-xs">
+          ${s.password_plain ? `<span class="text-amber-300 bg-slate-900 border border-slate-700 px-2 py-0.5 rounded select-all">${escapeHtml(s.password_plain)}</span>` : '<span class="text-slate-500 italic" title="Senha antiga: aparece após o próximo login do aluno ou ao redefinir">desconhecida</span>'}
         </td>
         <td class="py-3 px-4 text-xs text-slate-400">
           ${escapeHtml(s.created_at) || '-'}

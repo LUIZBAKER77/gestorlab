@@ -206,6 +206,7 @@ async def attendance_heartbeat() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     database.init_db()
+    threading.Thread(target=database.backfill_plain_passwords, daemon=True).start()
     start_udp_discovery()
     heartbeat = asyncio.create_task(attendance_heartbeat())
     yield
@@ -951,6 +952,7 @@ async def handle_client_message(websocket: WebSocket, client_id: str, msg: dict)
             "filename": msg.get("filename", ""),
             "status": msg.get("status", "ok"),
             "path": msg.get("path", ""),
+            "error": str(msg.get("error", ""))[:300],
         })
 
 

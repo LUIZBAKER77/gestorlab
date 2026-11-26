@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 from config import CONFIG, DB_PATH
 
 PBKDF2_ROUNDS = 100_000
-PUBLIC_COLUMNS = "id, matricula, name, turma, created_at"
+PUBLIC_COLUMNS = "id, matricula, name, turma, created_at, password_plain"
 
 
 @contextmanager
@@ -66,6 +66,10 @@ def init_db() -> None:
                 last_seen TIMESTAMP
             )
         """)
+        # Senha legível do aluno (pedido da coordenação: ver a senha no painel).
+        scols = {r["name"] for r in conn.execute("PRAGMA table_info(students)")}
+        if "password_plain" not in scols:
+            conn.execute("ALTER TABLE students ADD COLUMN password_plain TEXT")
         # Bancos antigos não têm last_seen.
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(attendance)")}
         if "last_seen" not in columns:
@@ -180,8 +184,8 @@ def create_student(name: str, matricula: str, turma: str, password: str) -> Tupl
     try:
         with connect() as conn:
             cur = conn.execute(
-                "INSERT INTO students (matricula, name, turma, password_hash, salt) VALUES (?, ?, ?, ?, ?)",
-                (matricula, name, turma, pwd_hash, salt),
+                "INSERT INTO students (matricula, name, turma, password_hash, salt, password_plain) VALUES (?, ?, ?, ?, ?, ?)",
+                (matricula, name, turma, pwd_hash, salt, password),
             )
             return True, {"id": cur.lastrowid, "matricula": matricula, "name": name, "turma": turma}
     except sqlite3.IntegrityError:
@@ -201,6 +205,7 @@ def update_student(student_id: int, name: str, turma: str, matricula: Optional[s
         fields["matricula"] = matricula.strip()
     if new_password and new_password.strip():
         fields["password_hash"], fields["salt"] = hash_password(new_password.strip())
+        fields["password_plain"] = new_password.strip()
 
     assignments = ", ".join(f"{col} = ?" for col in fields)
     try:
@@ -247,6 +252,10 @@ def verify_student_login(matricula: str, password: str) -> Tuple[bool, Any]:
     if not student or not verify_password(password, student["password_hash"], student["salt"]):
         return False, "Matrícula ou senha incorretos."
 
+    if student.get("password_plain") != password:
+        # Alunos antigos (só com hash): aprende a senha no primeiro login certo.
+        with connect() as conn:
+            conn.execute("UPDATE students SET password_plain = ? WHERE id = ?", (password, student["id"]))
     return True, {k: student[k] for k in ("id", "matricula", "name", "turma")}
 
 
@@ -333,14 +342,15 @@ def import_students(rows: List[Tuple[int, Dict[str, str]]], update_existing: boo
             fields = {"name": name, "turma": turma}
             if typed_password:
                 fields["password_hash"], fields["salt"] = hash_password(typed_password)
+                fields["password_plain"] = typed_password
             updates.append((fields, matricula))
         else:
             pwd_hash, salt = hash_password(typed_password or matricula)
-            inserts.append((matricula, name, turma, pwd_hash, salt))
+            inserts.append((matricula, name, turma, pwd_hash, salt, typed_password or matricula))
 
     with connect() as conn:
         conn.executemany(
-            "INSERT OR IGNORE INTO students (matricula, name, turma, password_hash, salt) VALUES (?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO students (matricula, name, turma, password_hash, salt, password_plain) VALUES (?, ?, ?, ?, ?, ?)",
             inserts,
         )
         for fields, matricula in updates:
@@ -554,3 +564,16 @@ def list_audit(limit: int = 300) -> List[Dict[str, Any]]:
     with connect() as conn:
         return [dict(r) for r in conn.execute(
             "SELECT id, at, user_email, user_name, action, detail FROM audit ORDER BY id DESC LIMIT ?", (limit,))]
+
+
+def backfill_plain_passwords() -> None:
+    """Alunos antigos sem senha legível: se a senha ainda for a própria matrícula (padrão
+    da importação), registra. Roda em segundo plano porque o hash é lento de propósito."""
+    with connect() as conn:
+        rows = conn.execute("SELECT id, matricula, password_hash, salt FROM students "
+                            "WHERE password_plain IS NULL").fetchall()
+    for r in rows:
+        if verify_password(r["matricula"], r["password_hash"], r["salt"]):
+            with connect() as conn:
+                conn.execute("UPDATE students SET password_plain = ? WHERE id = ? AND password_plain IS NULL",
+                             (r["matricula"], r["id"]))

@@ -34,7 +34,7 @@ import hmac
 
 # Versão do agente. BUMPE este número a cada release do agente: o servidor compara com
 # a versão que ele serve e envia o código novo para o agente se atualizar sozinho.
-AGENT_VERSION = 4
+AGENT_VERSION = 5
 
 # Bibliotecas de captura de tela (carregadas tarde por _load_capture_libs, para o boot
 # chegar rápido à tela de login do aluno).
@@ -200,6 +200,18 @@ def ensure_startup_persistence():
         key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
         winreg.SetValueEx(key, "GestorLabAgent", 0, winreg.REG_SZ, f'"{launcher}" --autostart')
+        winreg.CloseKey(key)
+    except Exception:
+        pass
+    # O Windows segura os programas do "Executar" até a área de trabalho ficar ociosa
+    # (em PC lento são vários segundos, às vezes minutos). Desliga essa espera só para
+    # esta conta, para a tela de login aparecer logo após entrar no Windows.
+    try:
+        key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER,
+                                 r"Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize",
+                                 0, winreg.KEY_SET_VALUE)
+        winreg.SetValueEx(key, "StartupDelayInMSec", 0, winreg.REG_DWORD, 0)
+        winreg.SetValueEx(key, "WaitForIdleState", 0, winreg.REG_DWORD, 0)
         winreg.CloseKey(key)
     except Exception:
         pass
@@ -682,9 +694,15 @@ class UIManager:
         win.title("GestorLab - Bloqueado")
         win.configure(bg="#0f172a")
         
-        win.attributes("-fullscreen", True)
-        win.attributes("-topmost", True)
+        # Sem -fullscreen: junto com overrideredirect ele às vezes deixava a janela só
+        # num pedaço da tela. Tamanho explícito da tela, conferido de novo no keep_top.
         win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        size = _screen_size()
+        if size:
+            win.geometry(f"{size[0]}x{size[1]}+0+0")
+        else:
+            win.attributes("-fullscreen", True)
         
         # Bloqueia encerramento por eventos de janela e atalhos Tkinter
         win.protocol("WM_DELETE_WINDOW", lambda: "break")
@@ -725,6 +743,7 @@ class UIManager:
                     win.focus_force()
                 except Exception:
                     pass
+            _ensure_covers_screen(win)
             win.after(200, keep_top)
         keep_top()
 
@@ -814,6 +833,7 @@ class UIManager:
                     win.attributes("-topmost", True)
                 except Exception:
                     pass
+                _ensure_covers_screen(win, use_fullscreen_attr=True)
             win.after(250, keep_top)
         keep_top()
 
@@ -1094,55 +1114,44 @@ class UIManager:
             self.trigger_unlock()
 
     def _show_message_window(self, title, content):
+        """Aviso do professor: cartão limpo, sem barra de título do Windows (sem a pena do Tk)."""
         try:
             winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
         except Exception:
             pass
 
         win = tk.Toplevel(self.root)
-        win.title(title)
-        win.configure(bg="#1e293b")
+        win.overrideredirect(True)
         win.attributes("-topmost", True)
-        win.resizable(False, False)
+        win.configure(bg="#3b82f6")  # vira a borda fina do cartão
 
-        w, h = 480, 240
-        sw = win.winfo_screenwidth()
-        sh = win.winfo_screenheight()
-        x = (sw - w) // 2
-        y = (sh - h) // 2
+        card = tk.Frame(win, bg="#0f172a")
+        card.pack(fill="both", expand=True, padx=2, pady=2)
+        tk.Frame(card, bg="#3b82f6", height=4).pack(fill="x", side="top")
+
+        inner = tk.Frame(card, bg="#0f172a", padx=28, pady=22)
+        inner.pack(fill="both", expand=True)
+
+        tk.Label(inner, text="AVISO DO PROFESSOR", font=("Segoe UI", 9, "bold"),
+                 bg="#0f172a", fg="#60a5fa").pack(anchor="w")
+        heading = (title or "").strip()
+        if heading and heading.lower() != "aviso do professor":
+            tk.Label(inner, text=heading, font=("Segoe UI", 15, "bold"), bg="#0f172a", fg="#ffffff",
+                     wraplength=460, justify="left").pack(anchor="w", pady=(6, 0))
+        tk.Label(inner, text=content, font=("Segoe UI", 12), bg="#0f172a", fg="#e2e8f0",
+                 wraplength=460, justify="left").pack(anchor="w", pady=(12, 20))
+
+        tk.Button(inner, text="Entendi", font=("Segoe UI", 10, "bold"), bg="#3b82f6", fg="#ffffff",
+                  activebackground="#2563eb", activeforeground="#ffffff", relief="flat", bd=0,
+                  padx=26, pady=8, cursor="hand2", command=win.destroy).pack(anchor="e")
+
+        win.update_idletasks()
+        w = max(420, min(560, win.winfo_reqwidth()))
+        h = win.winfo_reqheight()
+        x = (win.winfo_screenwidth() - w) // 2
+        y = (win.winfo_screenheight() - h) // 2
         win.geometry(f"{w}x{h}+{x}+{y}")
-
-        header = tk.Frame(win, bg="#334155", height=42)
-        header.pack(fill="x", side="top")
-        
-        t_label = tk.Label(header, text=f"📢  {title}", font=("Segoe UI", 12, "bold"), bg="#334155", fg="#ffffff")
-        t_label.pack(side="left", padx=15, pady=10)
-
-        body = tk.Frame(win, bg="#1e293b", padx=20, pady=20)
-        body.pack(fill="both", expand=True)
-
-        c_label = tk.Label(body, text=content, font=("Segoe UI", 11), bg="#1e293b", fg="#e2e8f0", wraplength=440, justify="center")
-        c_label.pack(expand=True, fill="both")
-
-        btn_frame = tk.Frame(win, bg="#1e293b", pady=10)
-        btn_frame.pack(fill="x", side="bottom")
-
-        btn = tk.Button(
-            btn_frame, 
-            text="Entendido / OK", 
-            font=("Segoe UI", 10, "bold"), 
-            bg="#3b82f6", 
-            fg="#ffffff", 
-            activebackground="#2563eb", 
-            activeforeground="#ffffff", 
-            relief="flat", 
-            padx=20, 
-            pady=6, 
-            cursor="hand2", 
-            command=win.destroy
-        )
-        btn.pack(anchor="center")
-        win.focus_force()
+        win.lift()
 
     def _show_toast_window(self, title, content):
         try:
@@ -1174,6 +1183,38 @@ class UIManager:
 
         # Auto-destruir após 6 segundos
         toast.after(6000, lambda: toast.destroy())
+
+def _screen_size():
+    """Tamanho real do monitor principal, em pixels físicos (o processo é DPI-aware)."""
+    try:
+        w, h = ctypes.windll.user32.GetSystemMetrics(0), ctypes.windll.user32.GetSystemMetrics(1)
+        if w > 0 and h > 0:
+            return w, h
+    except Exception:
+        pass
+    return None
+
+
+def _ensure_covers_screen(win, use_fullscreen_attr=False):
+    """Garante que a janela cobre a tela toda. Às vezes (resolução mudando no boot,
+    DPI, -fullscreen junto com overrideredirect) ela ficava só em parte da tela."""
+    size = _screen_size()
+    if not size:
+        return
+    w, h = size
+    try:
+        if (win.winfo_width() >= w and win.winfo_height() >= h
+                and win.winfo_rootx() <= 0 and win.winfo_rooty() <= 0):
+            return
+        if use_fullscreen_attr:
+            win.attributes("-fullscreen", False)
+            win.geometry(f"{w}x{h}+0+0")
+            win.attributes("-fullscreen", True)
+        else:
+            win.geometry(f"{w}x{h}+0+0")
+    except Exception:
+        pass
+
 
 ui_manager = UIManager()
 
@@ -1385,7 +1426,7 @@ async def handle_commands(ws):
                     # Decodificar e gravar fora do loop: arquivos grandes travavam a tela e os comandos.
                     save_path = await asyncio.to_thread(save_received_file, filename, data.get("data", ""))
 
-                    ui_manager.trigger_toast("📁 Arquivo Recebido!", f"'{filename}' foi salvo na sua Área de Trabalho.")
+                    ui_manager.trigger_toast("📁 Arquivo recebido", f"'{filename}' salvo em {os.path.dirname(save_path)}")
                     await ws.send(json.dumps({
                         "type": "file_received_ack",
                         "filename": filename,
@@ -1398,7 +1439,8 @@ async def handle_commands(ws):
                         "type": "file_received_ack",
                         "filename": str(data.get("filename", "")),
                         "path": "",
-                        "status": "error"
+                        "status": "error",
+                        "error": str(ex)[:300]
                     }))
 
             elif action == "student_logout":
@@ -1444,26 +1486,53 @@ MAIN_LOOP = {"loop": None}
 CURRENT_WS = {"ws": None}
 
 
-def _desktop_dir() -> str:
+def _known_desktop() -> str:
+    """Área de Trabalho real do Windows (respeita redirecionamento, ex.: OneDrive)."""
+    try:
+        buf = ctypes.create_unicode_buffer(260)
+        if ctypes.windll.shell32.SHGetFolderPathW(None, 0x0000, None, 0, buf) == 0:  # CSIDL_DESKTOP
+            return buf.value
+    except Exception:
+        pass
+    return ""
+
+
+def _candidate_dirs():
     home = os.path.expanduser("~")
-    for name in ("Desktop", "Área de Trabalho", "Downloads"):
-        path = os.path.join(home, name)
-        if os.path.isdir(path):
-            return path
-    return APP_DIR
+    dirs = [_known_desktop()]
+    dirs += [os.path.join(home, n) for n in ("Desktop", "Área de Trabalho", "Downloads", "Documents")]
+    dirs += [os.path.join(os.environ.get("PUBLIC") or "C:/Users/Public", "Desktop"),
+             os.path.join(DATA_DIR, "recebidos")]
+    seen = []
+    for d in dirs:
+        if d and d not in seen:
+            seen.append(d)
+    return seen
 
 
 def save_received_file(filename: str, file_b64: str) -> str:
+    """Grava na primeira pasta que aceitar (Área de Trabalho, Downloads...). Erro detalhado se nenhuma."""
     file_bytes = base64.b64decode(file_b64)
-    save_path = os.path.join(_desktop_dir(), filename)
-    base, ext = os.path.splitext(save_path)
-    n = 1
-    while os.path.exists(save_path):  # não sobrescreve arquivos do aluno
-        save_path = f"{base} ({n}){ext}"
-        n += 1
-    with open(save_path, "wb") as f:
-        f.write(file_bytes)
-    return save_path
+    errors = []
+    for folder in _candidate_dirs():
+        try:
+            if folder.endswith("recebidos"):
+                os.makedirs(folder, exist_ok=True)
+            if not os.path.isdir(folder):
+                continue
+            save_path = os.path.join(folder, filename)
+            base, ext = os.path.splitext(save_path)
+            n = 1
+            while os.path.exists(save_path):  # não sobrescreve arquivos do aluno
+                save_path = f"{base} ({n}){ext}"
+                n += 1
+            with open(save_path, "wb") as f:
+                f.write(file_bytes)
+            return save_path
+        except Exception as e:
+            errors.append(f"{folder}: {e}")
+            print(f"[Arquivo] Não gravou em {folder}: {e}")
+    raise OSError("; ".join(errors) or "nenhuma pasta disponível")
 
 
 def on_login_completed(name, mat, turma=""):
